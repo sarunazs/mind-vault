@@ -174,6 +174,7 @@ The plan's philosophy stays the same at every scope; the depth scales.
 - [references/thin-input-bootstrap.md](references/thin-input-bootstrap.md) — the interactive brainstorm front-end for thin inputs
 - [references/architect-handoff.md](references/architect-handoff.md) — how to invoke AGENT_architect as a reviewer and integrate findings
 - [references/batching-for-sprint-auto.md](references/batching-for-sprint-auto.md) — opt-in mode for grouping multiple `/plan` outputs onto one feature branch + PR to feed an overnight `/sprint-auto` run
+- [references/DEPENDENCY_SELECTION_CRITERIA.md](references/DEPENDENCY_SELECTION_CRITERIA.md) — load at step 4 ("Key Technical Decisions") when the plan recommends new packages; N-1 verified against current latest, no community forks, ecosystem familiarity over speed-to-MVP
 - [skills/idea/references/IDEAS_LOCATION_STATUS.md](../idea/references/IDEAS_LOCATION_STATUS.md) — the location-by-status contract driving step 6's `idea` → `in-progress` move
 - [docs/guides/SPRINT_WORKFLOW.md](../../docs/guides/SPRINT_WORKFLOW.md) — full sprint-workflow explainer with authoritative schemas
 - [skills/idea/SKILL.md](../idea/SKILL.md) — previous stage; produces the IDEA file this skill consumes
@@ -182,4 +183,4 @@ The plan's philosophy stays the same at every scope; the depth scales.
 
 ---
 
-**Last Updated**: 2026-04-20
+**Last Updated**: 2026-05-22
