@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Claude Code statusLine command
-# Segments: topic | ctx% | turn-tokens | 7d-rate | effort | vim-mode
+# Segments: topic | ctx% | turn-tokens | 5h-rate | 7d-rate | effort | vim-mode
 #
 # Runtime dependency: jq. If missing, the status line falls back to a single
 # "jq missing" segment so Claude Code keeps rendering without erroring out.
@@ -44,6 +44,7 @@ while IFS= read -r _sl_line; do
 done < <(jq -r '
     .session_name // "",
     (.context_window.used_percentage // ""),
+    (.rate_limits.five_hour.used_percentage // ""),
     (.rate_limits.seven_day.used_percentage // ""),
     (.context_window.current_usage.input_tokens // ""),
     (.context_window.current_usage.output_tokens // ""),
@@ -54,13 +55,14 @@ done < <(jq -r '
 ' <<< "$input")
 session_name="${_sl_fields[0]:-}"
 used_pct="${_sl_fields[1]:-}"
-seven_day="${_sl_fields[2]:-}"
-in_tok="${_sl_fields[3]:-}"
-out_tok="${_sl_fields[4]:-}"
-cache_write="${_sl_fields[5]:-0}"
-cache_read="${_sl_fields[6]:-0}"
-effort="${_sl_fields[7]:-}"
-vim_mode="${_sl_fields[8]:-}"
+five_hour="${_sl_fields[2]:-}"
+seven_day="${_sl_fields[3]:-}"
+in_tok="${_sl_fields[4]:-}"
+out_tok="${_sl_fields[5]:-}"
+cache_write="${_sl_fields[6]:-0}"
+cache_read="${_sl_fields[7]:-0}"
+effort="${_sl_fields[8]:-}"
+vim_mode="${_sl_fields[9]:-}"
 
 SEP=" $(printf "${DIM}│${RESET}") "
 
@@ -117,7 +119,22 @@ if [ -n "$in_tok" ] || [ -n "$out_tok" ]; then
         "$in_fmt" "$out_fmt" "$cache_str")")
 fi
 
-# ── 4. 7-day rolling rate limit ──────────────────────────────────────────────
+# ── 4. 5-hour rolling rate limit ─────────────────────────────────────────────
+# The short-window budget that gates a working session. Tier colors mirror ctx
+# and 7d exactly: dim (<50) / yellow-bold (50-79) / red-bold (≥80). May be absent
+# (non-subscriber, or before the session's first API response) — guard handles it.
+if [ -n "$five_hour" ]; then
+    hour_int=$(printf '%.0f' "$five_hour")
+    if [ "$hour_int" -ge 80 ]; then
+        parts+=("$(printf "${RED_BOLD}5h:%d%%${RESET}" "$hour_int")")
+    elif [ "$hour_int" -ge 50 ]; then
+        parts+=("$(printf "${YELLOW_BOLD}5h:%d%%${RESET}" "$hour_int")")
+    else
+        parts+=("$(printf "${DIM}5h:%d%%${RESET}" "$hour_int")")
+    fi
+fi
+
+# ── 5. 7-day rolling rate limit ──────────────────────────────────────────────
 # Tier colors mirror ctx exactly: dim (<50) / yellow-bold (50-79) / red-bold (≥80).
 if [ -n "$seven_day" ]; then
     week_int=$(printf '%.0f' "$seven_day")
@@ -130,7 +147,7 @@ if [ -n "$seven_day" ]; then
     fi
 fi
 
-# ── 5. Thinking effort ───────────────────────────────────────────────────────
+# ── 6. Thinking effort ───────────────────────────────────────────────────────
 if [ -n "$effort" ]; then
     case "$effort" in
         low)    effort_str="🧠 low"  ; effort_color="$DIM" ;;
@@ -143,7 +160,7 @@ if [ -n "$effort" ]; then
     parts+=("$(printf "${effort_color}%s${RESET}" "$effort_str")")
 fi
 
-# ── 6. Vim mode ──────────────────────────────────────────────────────────────
+# ── 7. Vim mode ──────────────────────────────────────────────────────────────
 if [ -n "$vim_mode" ]; then
     case "$vim_mode" in
         INSERT)      parts+=("$(printf "${GREEN_BOLD}-- INSERT --${RESET}")") ;;
