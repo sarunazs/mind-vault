@@ -28,7 +28,7 @@ _(none)_
 
 ### IDEA-008: Add 5-hour rate-limit segment to the status line ✅ COMPLETE
 
-**Status**: ✅ **COMPLETE** · **Completed**: 2026-06-01 · **See**: [Archive](../archive/2026-06-idea-008-statusline-5h-rate-limit/IDEA-008-statusline-5h-rate-limit.md).
+**Status**: ✅ **COMPLETE** · **Completed**: 2026-06-01 · **See**: [Archive](../archive/2026-06-idea-008-statusline-5h-rate-limit/IDEA-008-statusline-5h-rate-limit.md), [PR #7](https://github.com/sarunazs/mind-vault/pull/7).
 Added a `5h:NN%` segment to `scripts/statusline-command.sh`, fed from `rate_limits.five_hour.used_percentage` and rendered immediately before the existing `7d:` segment (escalating-window order: `ctx → tokens → 5h → 7d → effort → vim`). Reuses the established dim/yellow-bold/red-bold tier thresholds (<50 / 50–79 / ≥80) shared by `ctx` and `7d` so the three percentage meters read consistently. Guarded with the same `if [ -n … ]` presence check as every other segment, so the 5h window degrading to absent (non-subscriber, or pre-first-API-response) renders cleanly. `five_hour` inserted adjacent to `seven_day` in the single-pass jq invocation, preserving the one-process-per-render hot-path. Standalone extension of the status-line work shipped in commit `6f5d731` (PR #136).
 
 ### IDEA-007: Consolidate `Optional extensions` blocks into `## References` across feature-dense skills ✅ COMPLETE

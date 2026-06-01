@@ -2,7 +2,7 @@
 
 **Status**: ✅ Complete
 **Completed**: 2026-06-01
-**PR**: _(pending — see index)_
+**PR**: [#7](https://github.com/sarunazs/mind-vault/pull/7)
 **Related**: builds directly on the status-line script shipped in commit `6f5d731` (PR #136).
 
 ## What shipped
