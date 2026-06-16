@@ -39,6 +39,15 @@ The user's mental model differs by filter type:
 - **Tags** are scope-FK-bound — `Tag` rows reference a `Scope` FK, so an article's tag IDs only mean something within that scope. Crossing entity boundaries OR scope boundaries invalidates them.
 - **Text search** (`q`) is a transient input. Carrying "give me everything matching 'Q4'" from articles to events is rarely the user's intent.
 
+## A surface persisting its OWN key is not cross-entity bleed
+
+The anti-bleed rule is sometimes misread as "this surface must not session-persist filters at all" — usually after a review finding flags one surface reading *another* surface's cross-entity bucket. That conflates two different things:
+
+- **Correct** — a surface owns and persists its own `<namespace>_<surface>_filters_<org_id>` bucket (the per-entity pattern above). Its filters survive its own reloads and touch no sibling. A brand-new surface adding its own bucket is *following* the pattern, not violating it.
+- **The actual anti-pattern** — a surface *reads* a cross-entity bucket it doesn't own (`cross_filters_<org_id>` populated by a different entity family), so an unrelated surface's scope/category leaks in.
+
+The gate isn't "no session persistence"; it's **"read only the keys you own."** A surface with its own date-range/status filter legitimately persists them in `<surface>_filters_<org_id>`; it just never reaches into another family's `cross_filters_<org_id>`. When a reviewer flags "this surface persists filters", check *which key* it reads — own-key persistence passes; foreign-key reads fail.
+
 ## Server-side mechanics
 
 ```python
@@ -126,6 +135,33 @@ When filter state changes via HTMX (form submit refreshes the centre list, not t
 
 Path 2 is the right answer. i18n templates emitted as `data-tags-i18n-zero` / `data-tags-i18n-plural` on the form root carry localised pluralisable strings; JS substitutes a `{n}` placeholder at click time.
 
+## A shared rebind that REBUILDS a widget must re-seed selection from the server DOM
+
+The path-2 idempotent rebind above is fine when the widget's DOM survives the swap. It is **not** fine when a dependent-control cascade *rebuilds* the widget's options on (re-)bind — the classic case: a tag picker whose checkboxes are re-fetched and re-rendered whenever a parent `<select>` (scope/category) is set. There the rebind runs `fetchOptions(parent) → renderCheckboxes(options, selectedIds)`, and **whatever `selectedIds` the rebind passes becomes the new checked state, overwriting the server-rendered one.**
+
+The trap fires specifically on **re-entry** (shell-nav back / fragment swap), where the same shared init binds a *server-rendered* form whose selection is already correct:
+
+- The per-page init (first load) seeds `selectedIds` from the URL/initial state — works.
+- The shared shell-nav rebind binds the swapped-in form **without** re-deriving `selectedIds`, so the rebuild defaults to `[]` → wipes every checkbox.
+- **Silent desync**: the server session still has the filter, so the list stays filtered AND the section stays expanded — but the boxes show unchecked. The user's next click then submits only the visibly-checked set, **clobbering the persisted filter**. (Looks like "the filter randomly cleared itself.")
+
+**Fix — the rebind must re-seed `selectedIds` from the server-rendered checked DOM**, mirroring exactly what the first-load init does:
+
+```js
+initWidget(form, {
+    // ... triggerEvent etc ...
+    getInitialSelectedIds() {
+        // Read the truth the server already rendered into the swapped-in form.
+        return [...form.querySelectorAll('input[name="tags"]:checked')]
+            .map(cb => cb.value).filter(Boolean);
+    },
+});
+```
+
+**General rule**: any init that *rebuilds* a selection widget on re-entry must derive its initial-selection from the server-rendered DOM, not from an empty default — and the per-page init and the shell-nav rebind must use the **same** seeding source. A "fixed on first load, wiped on nav-back" selection bug is almost always a rebind that forgot to re-seed. Pairs with the server-session-is-truth contract above: the session never lost the filter; the *client* threw away its mirror of it.
+
+Lock it with a Playwright round-trip test: set the selection, shell-nav away + back, assert the control is still `checked` (not just that the list is still filtered — the desync leaves the list filtered while the control reads unchecked, so a list-only assertion passes through the bug).
+
 ## Checkbox-toggle filters need an explicit allowlist
 
 HTML omits unchecked checkboxes from form-data submissions. A `<input type="checkbox" name="needs_approval" value="1">` that's unchecked produces **no** `needs_approval` key in `request.GET` — indistinguishable from "this request came from a page that doesn't use that filter at all".
@@ -185,6 +221,48 @@ def test_unchecking_toggle_clears_session(self):
 ```
 
 The empty siblings matter: `has_filter_params` becomes True (because `scope` is in GET, even though its value is empty), the toggle-clear loop runs, the toggle drops from session.
+
+## The resolver's `filter_keys` must be a superset of what the render fn reads
+
+`get_effective_filters(request, *, namespace, filter_keys)` only merges and returns
+the keys named in `filter_keys`. If a caller passes a `filter_keys` tuple that omits
+keys the **render function downstream actually applies** — most easily the
+`CHECKBOX_TOGGLE_KEYS` toggles — the resolver returns a dict missing those keys, and
+the render fn filters on nothing for them. The toggles appear dead: clicking a pill on
+a cold-loaded surface re-fetches the partial but never activates / deactivates the
+filter.
+
+The trap is that **the symptom points at the wrong layer.** The render fn is correct —
+it reads `filters['assigned_to_me']` and filters properly *when the key is present*.
+The bug is upstream: the resolver was never asked to resolve that key, so it's absent
+from `filters`. It reads as "the render fn doesn't apply the toggle" when it's really
+"the resolver under-scoped its `filter_keys` and starved the render fn." Grep the
+render fn for every `filters[...]` / `filters.get(...)` key it consumes and confirm the
+resolver's `filter_keys` is a superset:
+
+```python
+# WRONG — toggles dropped from the resolver scope; the render fn never sees them
+filters = get_effective_filters(request, namespace='dashboard',
+                                filter_keys=('scope', 'property'))   # ← missing toggles
+# render fn applies filters['assigned_to_me'] etc. → always absent → toggle is dead
+
+# RIGHT — resolver scope is a superset of what the render fn reads
+filters = get_effective_filters(request, namespace='dashboard',
+                                filter_keys=('scope', 'property', *CHECKBOX_TOGGLE_KEYS))
+```
+
+### One namespace across the write path AND the read path
+
+Per-entity persistence keys the session bucket on `namespace`
+(`{namespace}_{entity}_filters_{org_id}`). The **write path** (the workspace filter
+form that sets the toggle) and the **read path** (the param-less load-more /
+entity-refresh partial that re-fetches) must pass the **same** `namespace` — otherwise
+the read path resolves a *different* bucket than the one the form wrote, and a
+param-less re-fetch reads a stale (or empty) entry. A surface whose form submits under
+`namespace='dashboard'` but whose refresh partial resolves under
+`namespace='dashboard_events'` writes one bucket and reads another: the toggle
+"persists" on submit but evaporates on the next no-param refresh. Unify the namespace
+constant across both call sites; don't let the partial view re-derive its own.
 
 ## Chip-row + per-filter-clear endpoint pattern
 
@@ -288,5 +366,3 @@ class EventChipRowFilterClearTests(TenantTestCaseBase):
 ## Reference
 
 Pairs with [`RULE_tenant-scoped-fk-validation`](../../django/references/TENANT_SCOPED_FK_VALIDATION.md) for the org-scoped session keys.
-
-**Last Updated**: 2026-05-14

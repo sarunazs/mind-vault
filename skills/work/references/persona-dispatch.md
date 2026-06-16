@@ -2,6 +2,25 @@
 
 Rules for routing plan Execution Sequence items to the right persona, and for provisioning parallel worktrees when the plan calls for them. Load on demand at `/work` steps 2 and 3.
 
+## Canonical persona ↔ subagent_type map
+
+Each persona registers as a recognized Claude Code subagent under its `name:` — the **bare role name** (`architect`, `backend`, …). Dispatch with `Agent(subagent_type: "<id>")`; the backing profile file keeps its `AGENT_*.md` name (Claude dispatches on the frontmatter `name:`, not the filename — see [`docs/guides/AGENT_PORTABILITY.md`](../../../docs/guides/AGENT_PORTABILITY.md)). (Historical note: profiles were originally named `mv-<persona>` to dodge shared-registry collisions; IDEA-020 dropped that `mv-` prefix — on the plugin channel the plugin's own `mv:` namespace disambiguates, and the doubly-prefixed `mv:mv-architect` was redundant.)
+
+**Channel-aware dispatch (plugin route — IDEA-020).** `subagent_type` is an *executed* lookup, so it must mirror the install channel — see [`CHANNEL_AWARE_DISPATCH.md`](CHANNEL_AWARE_DISPATCH.md). On the **symlink channel** the `subagent_type` is the bare `<persona>` in the table below (`architect`, …). On the **plugin channel** the marketplace plugin namespaces it, so the dispatchable id is **`mv:<persona>`** (e.g. `mv:architect`) — a bare `architect` returns `Agent type … not found` there. Mirror the prefix you were invoked with (the plugin route's `${CLAUDE_PLUGIN_ROOT}` is not in the agent shell, so use the invocation form, not an env probe); under sprint-auto `source` the batch state file (`/tmp/sprint-auto-<batch-iso>-state.sh`, sprint-auto S(-1) step 10) and dispatch **`${SPRINT_AUTO_CHANNEL_PREFIX}<persona>`** — the prefix concatenated with the table's persona id (e.g. `${SPRINT_AUTO_CHANNEL_PREFIX}backend` → `backend` symlink / `mv:backend` plugin), never the prefix alone. **Host-availability fallback:** if neither form resolves (persona not registered on this host), invoke the persona **inline from its profile file** (`agents/AGENT_<persona>.md`, resolved by repo path — channel-independent) rather than silently degrading to generic-Claude.
+
+| Persona | `subagent_type` | Profile file |
+| --- | --- | --- |
+| Systems Architect | `architect` | `agents/AGENT_architect.md` |
+| Staff Backend Engineer | `backend` | `agents/AGENT_backend.md` |
+| Staff Client-Side Engineer | `frontend` | `agents/AGENT_frontend.md` |
+| SRE / Infrastructure Lead | `devops` | `agents/AGENT_devops.md` |
+| QA / Surgical TDD Enforcer | `test-engineer` | `agents/AGENT_test-engineer.md` |
+| Curator (pre-commit review) | `curator` | `agents/AGENT_curator.md` |
+| External Intelligence Scout | `researcher` | `agents/AGENT_researcher.md` |
+| Technical Writer / Clarifier | `documentation` | `agents/AGENT_documentation.md` |
+
+Conceptual prose elsewhere may still call a persona by its display name (`AGENT_backend`); the dispatchable string an executor passes is the bare `<persona>` id above (`mv:<persona>` on the plugin channel).
+
 ## Persona dispatch matrix
 
 The default matrix lives in `SKILL.md`. This file documents the edges, overrides, and the parallel-worktree flow.
@@ -10,13 +29,13 @@ The default matrix lives in `SKILL.md`. This file documents the edges, overrides
 
 Some plan items span multiple personas. Resolve by the **primary artifact touched**, not by the item's stated intent.
 
-| Plan item example | Primary artifact | Persona |
+| Plan item example | Primary artifact | Subagent type |
 | --- | --- | --- |
-| "Add admin widget for billing summary" | Template + Alpine view logic | `AGENT_frontend` |
-| "Add `billing_summary` API endpoint the widget consumes" | DRF viewset | `AGENT_backend` |
-| "Dockerise the new Celery queue" | `docker-compose.yml` + entrypoint | `AGENT_devops` |
-| "Add integration test for the new endpoint" | `test_*.py` | `AGENT_test-engineer` |
-| "Refactor permission layer across auth+billing+kb apps" | Spans 3 apps, shared base class | `AGENT_architect` (author mode) |
+| "Add admin widget for billing summary" | Template + Alpine view logic | `frontend` |
+| "Add `billing_summary` API endpoint the widget consumes" | DRF viewset | `backend` |
+| "Dockerise the new Celery queue" | `docker-compose.yml` + entrypoint | `devops` |
+| "Add integration test for the new endpoint" | `test_*.py` | `test-engineer` |
+| "Refactor permission layer across auth+billing+kb apps" | Spans 3 apps, shared base class | `architect` (author mode) |
 
 If a single item genuinely touches two domains, split it into two items first — the plan is expressing two logical units and should have been split at plan time.
 
@@ -39,6 +58,55 @@ If none of the available personas match the item, that's a signal the plan is ei
 - Missing infrastructure (the project needs a new persona added to mind-vault).
 
 Stop and ask the user rather than force-fitting.
+
+## Stack resolution
+
+A stack-agnostic persona's `## Stack adapter` points at "the active backend/frontend
+skill" rather than a concrete framework (see [`SKILL_CONTRACT.md`](SKILL_CONTRACT.md)).
+Resolving *which* skill that is happens here, once per `/work` session, in this order —
+first hit wins:
+
+1. **`.claude/dispatch.md` `stack:` pin** (explicit, per-repo, highest authority).
+2. **`AGENTS.md` `stack:` pin** (repo root convention).
+3. **Auto-detect signals** (the table below).
+4. **Ask the user once**, then record the answer as a `stack:` pin so it never re-asks.
+
+### `stack:` pin convention
+
+In `.claude/dispatch.md` (or `AGENTS.md`), backend and frontend resolve independently —
+a repo may pair, e.g., a Laravel backend with a JS-tool frontend:
+
+```yaml
+stack:
+  backend: django            # → skills/django/
+  frontend: django-frontend  # → skills/django-frontend/
+```
+
+A single value (`stack: django`) is shorthand for `backend: django` with the frontend
+left to auto-detect.
+
+### Auto-detect signal table
+
+**Precedence rule (A2): backend and frontend are detected separately.** A backend marker
+resolves *only* the backend stack; `package.json` resolves *only* the frontend stack and
+NEVER the backend — so a Laravel repo shipping a Vite/Tailwind `package.json` is not
+misdetected as a Node backend.
+
+| Stack | Backend signal (resolves backend only) | Frontend signal (resolves frontend only) |
+| --- | --- | --- |
+| django | `manage.py`, `settings.py` | Django templates + `django-cotton` / `templates/cotton/` |
+| laravel | `composer.json` + `artisan` | `resources/views/*.blade.php` |
+| node | a server entry file (`server.js` / `app.js`) — NOT `package.json`, which stays frontend-only (A2); pin a Node *backend* via `dispatch.md` if the entry file is absent/ambiguous | `package.json` (frontend tooling) |
+
+If backend and frontend signals point at different stacks (Laravel backend + JS
+frontend), that is valid — resolve each independently. If signals are absent or
+ambiguous, fall through to step 4 (ask once). Per the fail-open contract, an adapter
+whose stack never resolves enforces craft-only and **announces** the gap — it does not
+silently skip the stack rule.
+
+No executable detector ships in Phase 1 — these signals are read by the dispatcher /
+agent directly. A `tools/detect-stack.sh` is deferred until a real third stack justifies
+it.
 
 ## Parallel worktree setup
 
@@ -106,9 +174,5 @@ Silent plan deviation is the pattern that makes execution expensive to review la
 ## What NOT to route through this skill
 
 - **Pure refactors without feature content.** If the plan is "extract `EventRenderer` into its own module, no behaviour change", architect is the author; backend is not needed.
-- **Documentation-only work.** `AGENT_documentation` handles it; the work skill barely orchestrates.
+- **Documentation-only work.** `documentation` handles it; the work skill barely orchestrates.
 - **Exploratory prototyping with no plan.** If there's no plan, there's nothing to dispatch. Drop to direct work or route to `/plan`.
-
----
-
-**Last Updated**: 2026-04-19

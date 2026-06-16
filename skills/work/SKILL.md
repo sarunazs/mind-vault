@@ -1,6 +1,6 @@
 ---
 name: work
-description: Execute a plan produced by /plan — reads the plan at docs/archive/YYYY-MM-idea-NNN-<slug>/YYYY-MM-DD-<slug>-plan.md, enforces RULE_parallel-worktree-docker and RULE_git-safety, dispatches to AGENT_backend/frontend/devops/test-engineer, checks off plan items as commits land. Third stage of the mind-vault sprint workflow.
+description: Execute a plan produced by /plan — reads the plan at docs/archive/YYYY-MM-idea-NNN-<slug>/YYYY-MM-DD-<slug>-plan.md, enforces RULE_parallel-worktree-docker and RULE_git-safety, dispatches per the persona dispatch matrix, checks off plan items as commits land. Third stage of the mind-vault sprint workflow.
 ---
 
 # work
@@ -47,16 +47,16 @@ Honour `RULE_git-safety` and `RULE_parallel-worktree-docker` at all times.
 
 Walk the plan's Execution Sequence. For each step, pick the right persona via the dispatch matrix in [`references/persona-dispatch.md`](references/persona-dispatch.md).
 
-Default matrix (projects can override in their own `AGENTS.md`):
+Default matrix (projects can override in their own `AGENTS.md`). The right column is the dispatchable `subagent_type` — pass it to `Agent(subagent_type: …)`, **channel-aware**: the bare `<persona>` below on the symlink channel, **`mv:<persona>`** on the plugin channel (mirror your invocation prefix — see [`references/CHANNEL_AWARE_DISPATCH.md`](references/CHANNEL_AWARE_DISPATCH.md) and [`references/persona-dispatch.md`](references/persona-dispatch.md), which also carries the host-availability inline-fallback). The profile file backing each id is mapped in persona-dispatch.md:
 
-| Plan-item domain | Persona |
-| --- | --- |
-| Models, views, signals, DRF, Channels, Celery, ORM | `AGENT_backend` |
-| Templates, Alpine, HTMX, Bulma, static assets, JS | `AGENT_frontend` |
-| Docker, compose, nginx, systemd, CI/CD, env config | `AGENT_devops` |
-| Test authoring, fixture design, coverage gates | `AGENT_test-engineer` |
-| Multi-domain or cross-cutting refactor | `AGENT_architect` (as author now, not reviewer — plan already reviewed) |
-| Documentation-only updates (README, CHANGELOG) | `AGENT_documentation` |
+| Plan-item domain                                   | Subagent type                                                        |
+| -------------------------------------------------- | -------------------------------------------------------------------- |
+| Models, views, signals, DRF, Channels, Celery, ORM | `backend`                                                         |
+| Templates, Alpine, HTMX, Bulma, static assets, JS  | `frontend`                                                        |
+| Docker, compose, nginx, systemd, CI/CD, env config | `devops`                                                          |
+| Test authoring, fixture design, coverage gates     | `test-engineer`                                                   |
+| Multi-domain or cross-cutting refactor             | `architect` (as author now, not reviewer — plan already reviewed) |
+| Documentation-only updates (README, CHANGELOG)     | `documentation`                                                   |
 
 Pass the persona the **plan path + the specific item index** — never inline the item's prose into the dispatch prompt (per the "pass paths not content to subagents" convention). The persona reads the plan file itself.
 
@@ -73,6 +73,7 @@ Commit per logical unit, not per file. One commit per completed Execution Sequen
   ```
 
 - **Never `--no-verify`, never plain `--force`.** `--force-with-lease` is allowed on feature branches the agent owns.
+
 - **After each commit**, update the plan file in place: mark the completed item with ✅ and the commit SHA short. Keeps the plan a living progress document.
 
 ### 5. Verification and handoff
@@ -80,23 +81,25 @@ Commit per logical unit, not per file. One commit per completed Execution Sequen
 After all Execution Sequence items land:
 
 1. Run the commands listed in the plan's Verification section. Capture output. **Verification routing — see § "Sprint-auto v3.1 verification routing" below for the env-var-driven mode.**
-2. If verification passes, open a PR: `gh pr create --title "<type>(<scope>): <plan.slug>" --body <plan-derived-body>`. Include the plan path in the PR body so the reviewer has the full context.
+2. If verification passes, open a PR **as a draft**: `gh pr create --draft --title "<type>(<scope>): <plan.slug>" --body <plan-derived-body>`. Include the plan path in the PR body so the reviewer has the full context. **Draft is deliberate:** the Claude review engine is push-triggered (auto-runs + bills a review on every push to a *non-draft* PR), so keeping the PR draft through `/work` + the `/wrap` docs-finalization step suppresses per-commit reviews and SILENT-on-WIP noise. `/review-loop`'s pre-flight un-drafts it so engines review the finalized (wrapped) state once. (Bugbot/Copilot are on-demand and unaffected; un-draft early only if you want a mid-`/work` Claude pass.)
 3. Mark the plan `status: shipped` in frontmatter.
-4. Print the PR URL and suggest the next-stage chain: `/<engine>-loop <pr-url>` → `/wrap NNN`.
+4. Print the PR URL and suggest the next-stage chain: `/wrap NNN` → `/<engine>-loop <pr-url>` → `/land NNN`.
 
-The full canonical chain after `/work` opens the PR:
+The full canonical chain after `/work` opens the PR (wrap-before-review, single review, then land):
 
 ```text
-/work        → opens PR, plan: shipped, code committed
-/<engine>-loop → clears review findings, retriggers until clean
+/work        → opens PR (draft), plan: shipped, code committed
 /wrap NNN    → docs commits ride the same PR (frontmatter flip,
                ideas-index, devlog, archive README, downstream scan).
-               If PR base is non-protected, wrap also squash-merges.
-               If PR base is protected, wrap hands back the PR URL
-               for human merge.
+               Finalizes docs; NEVER merges.
+/<engine>-loop → single review over the WRAPPED PR (code + docs);
+               clears findings, retriggers until clean.
+/land NNN    → precondition guard (docs finalized?), then:
+               non-protected base → squash-merge + post-merge teardown;
+               protected base → hand back the PR URL for human merge.
 ```
 
-The single-IDEA chain mirrors what sprint-auto already does at the multi-IDEA scale: code → review → docs → integration merge as ONE shipping moment. Don't split it into two operator turns when the merge target is non-protected per [`RULE_git-safety`](../../rules/RULE_git-safety.md).
+The single-IDEA chain mirrors what sprint-auto already does at the multi-IDEA scale: code → wrap → one review → merge as ONE shipping moment. `/land` is the merge stage; don't split the merge into a separate operator decision when the target is non-protected per [`RULE_git-safety`](../../rules/RULE_git-safety.md).
 
 If verification fails:
 
@@ -144,6 +147,7 @@ fi
 ```
 
 When `SPRINT_AUTO_INTEGRATION_WORKTREE` is set:
+
 - The agent never runs `docker compose` against the per-IDEA worktree (there's no `.env`, no override file — would fail).
 - The agent never creates a `.env` in the per-IDEA worktree (the env-var contract guarantees verification happens elsewhere).
 - The DB state on the integration worktree is the **main-equivalent baseline** for this IDEA (sprint-auto reset it at S1.5 before invoking `/work`); the verification runs against that baseline.
@@ -153,7 +157,7 @@ The full env-var contract is in [`../sprint-auto/references/integration-stage.md
 
 ### 6. Frontmatter flip — `/wrap` is the canonical owner; this section is the fallback
 
-**Primary path: `/wrap` does the frontmatter flip pre-merge.** `/wrap NNN` runs after `/<engine>-loop` clears, before merge — it flips IDEA frontmatter `in-progress → complete`, updates the ideas index, appends the devlog entry, scans downstream docs, and (when target is non-protected) squash-merges atomically. The `/work` skill does NOT duplicate that work in the normal flow — it hands off to `/wrap`.
+**Primary path: `/wrap` does the frontmatter flip pre-merge.** `/wrap NNN` runs before the single review — it flips IDEA frontmatter `in-progress → complete`, updates the ideas index, appends the devlog entry, scans downstream docs. It does NOT merge (merge is the separate `/land` stage after review clears). The `/work` skill does NOT duplicate that work in the normal flow — it hands off to `/wrap`, then `/review-loop`, then `/land`.
 
 **Fallback in this section fires only when `/wrap` was bypassed** — the user merged the PR directly without invoking `/wrap`, or a hotfix landed without ceremony. In that case, the next `/work` invocation that touches a merged-but-unflipped IDEA runs the steps below as a cleanup pass on a separate `chore/complete-idea-NNN` branch. The `/wrap` skill itself also has a "post-merge fallback" mode that does the same thing with full docs sweep — prefer `/wrap NNN` post-merge over the pared-down version below.
 
@@ -237,7 +241,3 @@ This is the canonical landing page for anyone discovering the idea via grep/inde
 - [references/AUDIT_NEWLY_REACHABLE_CODE.md](references/AUDIT_NEWLY_REACHABLE_CODE.md) — load when the fix being applied REMOVES a short-circuit (empty-state guard, early return, missing call, async resolution, type-gate relaxation); audit newly-reachable downstream code for latent issues before committing
 - [references/LIVE_URL_BEFORE_DONE.md](references/LIVE_URL_BEFORE_DONE.md) — load at the end of /work's verification stage when the project has a public URL; "shipped" means the URL works, not green tests + open PR; includes the server-side request simulation pattern for complex auth flows
 - [agents/AGENT_backend.md](../../agents/AGENT_backend.md), [AGENT_frontend.md](../../agents/AGENT_frontend.md), [AGENT_devops.md](../../agents/AGENT_devops.md), [AGENT_test-engineer.md](../../agents/AGENT_test-engineer.md) — implementation personas dispatched by this skill
-
----
-
-**Last Updated**: 2026-05-22

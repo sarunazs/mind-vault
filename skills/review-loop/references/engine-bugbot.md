@@ -14,14 +14,9 @@ Adapter specification for the Cursor Bugbot review engine. The orchestrator at [
 - `./tools/find_bugbot_comments.sh <PR_NUMBER>` — fetches reviews + inline findings from cursor[bot], emits the contract-shape stream (`BUGBOT_LATEST_REVIEW=...`, `BUGBOT_CLEAN_SIGNAL=...` if applicable, then findings, plus optional `BUGBOT_CHECKRUN=...` informational marker — surfaces the Cursor check-suite's status/conclusion on the PR head, used by the stall-detection failure mode below).
 - `./tools/bugbot_retrigger.sh <PR_NUMBER>` — posts the literal comment `bugbot run` on the PR. Hard-coded body so the script can be pre-approved in `~/.claude/settings.json`. Equivalent to `gh pr comment <PR> -b "bugbot run"`.
 
-## § Clean-signal parsing
+## § Clean detection
 
-`find_bugbot_comments.sh` emits `BUGBOT_CLEAN_SIGNAL=<review-id> COMMIT=<sha> AT=<ts>` in two cases:
-
-1. **Body-text match** — the latest bugbot review body contains "found no new issues".
-2. **Check-run synthesis** — when no body-text match exists, the script synthesizes from a successful bugbot check-run. For bugbot specifically, check-run-success aligns more closely with "no findings" than for Copilot (Cursor's check-suite turns neutral/non-success when bugbot finds issues), but the synthesis remains a best-effort fallback.
-
-**Phase 4 ordering supersedes synthesis errors**: the new-findings branch runs before the clean-signal branch, so any active findings (review `<rid>` == `BUGBOT_LATEST_REVIEW`) override a synthesized CLEAN. Always count active findings explicitly before claiming CLEAN.
+**Clean is structural** — see § Review-state gate: check-run `DONE` AND zero active findings matching `BUGBOT_LATEST_REVIEW`. `find_bugbot_comments.sh` may still emit a legacy `BUGBOT_CLEAN_SIGNAL` (body-text "found no new issues" match, or check-run synthesis); treat it as corroboration only. For bugbot, check-run-success aligns fairly well with "no findings" (Cursor's check-suite turns neutral/non-success when bugbot finds issues) — but the active-finding count is still authoritative. Always count active findings explicitly before claiming CLEAN. The check-run synthesis is now gated by the review-pending guard (§ Race-condition caveats) so it can't fire a clean in the check-run-before-review window.
 
 ## § Staleness rule
 
@@ -37,26 +32,24 @@ The `BUGBOT_CLEAN_SIGNAL` `COMMIT` field is the **trigger-anchor** SHA, not the 
 
 **Heuristic when strict `COMMIT === last_push_sha` fails**: if intervening commits since the signal's `COMMIT` are docs-only / markdown-only / comments-only, skip the re-trigger and accept the clean signal. Bugbot doesn't review prose-only diffs.
 
+**Check-run-completes-before-review (review-pending guard).** Bugbot's check-run can flip to `completed` before its review + inline comments post, the same race that produced a false CLEAN on copilot (PR #148). Because Cursor turns the check-suite **non-success when it finds issues** and the orchestrator's structural clean ignores `CONCLUSION`, the race is actually *worse* for bugbot than copilot: a findings check-run that completes before its comments post must NOT be read as DONE either. So `find_bugbot_comments.sh` applies the engine-general guard ([`engine-adapter-contract.md`](engine-adapter-contract.md) § Review-state gate) **conclusion-agnostically**: ANY `completed` check-run is trusted as DONE only once a `cursor[bot]` review for the head SHA has posted; until then `STATUS` is downgraded to `in_progress` and a `BUGBOT_REVIEW_PENDING` marker is emitted (`CONCLUSION=success` gates only `BUGBOT_CLEAN_SIGNAL` synthesis, not the downgrade). `BUGBOT_REVIEW_SETTLE_SECONDS` (default 600) trusts a review-less check-run after the window elapses **only if its conclusion is `success`**; a non-success review-less run (findings signaled, no comments) is held indefinitely — never trusted as clean — so the loop idle-times-out to HUNG for a human to investigate.
+
 **Line-number drift is NOT a new-finding signal**. GitHub line-anchored comments track code position across commits. Example from PR #55: after a fix push, bugbot's unresolved comment 3119819571 shifted from `install-gcloud-cli.sh:88` to `:97`, and comment 3119819578 from `:135` to `:144`. Title and file stayed identical; only the line moved. The `comment id` is the identity for staleness comparison.
 
 ## § Failure modes
 
 | Symptom | Detection | Orchestrator action |
 |---|---|---|
-| Bugbot stalled / hung | `BUGBOT_CHECKRUN status=in_progress` for >15 min on `last_push_sha` (well past 1-10 min normal range) | Proceed with other engines' findings if any; retrigger bugbot post-push. Surface in hand-back if bugbot doesn't recover within the idle-poll budget. |
+| Bugbot stalled / hung | `BUGBOT_CHECKRUN STATUS=in_progress` for >15 min on `last_push_sha` (well past 1-10 min normal range) | Proceed with other engines' findings if any; retrigger bugbot post-push. Surface in hand-back if bugbot doesn't recover within the idle-poll budget. |
 | Cursor service degraded | Bugbot reviews stop posting entirely for multiple PRs | Manual hand-back; no in-loop recovery. |
 | Bugbot self-withdraws a finding | A previously-active finding's `review <rid>` is no longer LATEST | Already handled by staleness filter — finding becomes stale, dropped from active triage. |
 
 ## § Common patterns (codified Tier 1)
 
-Defer to [`agents/AGENT_bugbot.md`](../../../agents/AGENT_bugbot.md) § Common Bugbot Patterns §1-8 for the codified auto-fix patterns. Triage rule: if a finding matches one of those 8 patterns AND touches ≤1 file AND has an existing targeted test, classify Tier 1 (auto-fix without per-finding approval prompt).
+The codified Tier-1 catalogue is shared across engines — see [`common-review-findings.md`](common-review-findings.md). Bugbot's catalogue is the empirically-validated baseline (multi-tenant Django SaaS PRs); no bugbot-specific deltas at present.
 
-## § Spacing rule
+## § Review-state gate
 
-≥5 minutes between same-engine retriggers. Field-observed degradation: 4 retriggers in 10 minutes stretched per-review latency from ~1-10 min (typical) to ~16 min as Cursor's check-suite queue worked through superseded entries.
+Bugbot posts a check-run on the PR head (the `cursor[bot]` app — matched by app-slug `cursor` / name `bugbot`). `find_bugbot_comments.sh` surfaces it as `BUGBOT_CHECKRUN ... STATUS=<status>`: `queued`/`in_progress` = **RUNNING**, `completed` = **DONE**. The orchestrator retriggers only after a push or from the zero-activity bootstrap and never while a check-run is RUNNING, so there is no retrigger interval to enforce.
 
-The rule is **per-engine** — under multi-engine mode bugbot+copilot back-to-back is fine (different queues). Only same-engine retriggers within 5 min violate the spacing.
-
-## § Notes on Common Bugbot Patterns location
-
-`AGENT_bugbot.md` predates this adapter split. Its Common Patterns block remains the canonical Tier-1 catalogue; this adapter does not duplicate it. If Common Patterns grows engine-specific subsections (rare), they land here under § Common patterns above.
+**Clean for bugbot**: check-run DONE AND zero active findings matching `BUGBOT_LATEST_REVIEW`. Bugbot also posts an explicit clean review on `/reviews`; treat that as corroboration, but the active-finding count is authoritative.

@@ -43,6 +43,19 @@ Write all target files for the routing decision. Common cases:
 - **Command:** new `commands/<verb>.md` following the shape of existing `commands/*.md` files.
 - **Script:** new `tools/<script>.sh` with `chmod +x`. Include a brief header comment.
 
+## Self-mode CHANGELOG bump (mind-vault self-promotion only)
+
+When `/compound` writes to mind-vault **itself** (a self-promotion — not a project-local `docs/solutions/` write), maintain `CHANGELOG.md` in the SAME commit:
+
+- **Pure `/compound` PRs increment the patch component by 1** (`vX.Y.Z → vX.Y.(Z+1)` — not a bump *to* `0.0.1`). Mind-vault's policy is per-PR versioning. A compound has no IDEA, so `/wrap` (whose Step 4b would handle the bump for an IDEA PR) never fires — `/compound` owns the bump. Take the topmost `## vMAJOR.MINOR.PATCH` header, increment PATCH, insert the new section above it.
+- **Section shape** (match existing entries' prose density): `## v<X.Y.Z> — <short title>`, a one-paragraph intro, then `### Added` / `### Changed` / etc. (Keep-a-Changelog keys), and a `(YYYY-MM-DD, [#N](https://github.com/infohata/mind-vault/pull/N))` tail.
+- **Bump the plugin-manifest mirror in lockstep.** mind-vault ships `.claude-plugin/plugin.json` whose `version` MUST mirror the top CHANGELOG `## vX.Y.Z` (IDEA-017). In the SAME commit, `jq` in-place `.version` to the new bare `X.Y.Z`. This is the mirror half of `/wrap` Step 4b's "N sync-required sources" contract — `/compound` owns the bump for IDEA-less PRs, so it owns the mirror too. Verify: `jq -r '.version' .claude-plugin/plugin.json` equals the new top CHANGELOG version.
+- **`## Unreleased` stays `_(none)_`** — a compound that is the shipping unit writes its `## v` section directly, not a parked Unreleased bullet.
+- **Post-merge:** `make release` cuts the tag from the topmost CHANGELOG header (see wrap SKILL.md Step 4b § Mechanics, `make release` sub-bullet).
+- **Remote/overnight note:** this is why the policy lives here, not in auto-memory — a compound run on the VPS (sprint-auto, overnight) must apply the same bump. Auto-memory doesn't sync across hosts; mind-vault does.
+
+Mind-vault-self-mode ONLY. For every other project, `/compound` writes project-local docs and does NOT touch any CHANGELOG.
+
 ## Commit format
 
 One commit per `/compound` invocation. Scope reflects the destination:
@@ -122,7 +135,3 @@ Include the PR URL explicitly so the user can click through.
 - **Target file has merge conflicts.** The skill detected an existing file to extend but git shows conflict markers. Stop, report, and let the user resolve manually.
 
 Silent retry loops are forbidden. Report and ask.
-
----
-
-**Last Updated**: 2026-04-19

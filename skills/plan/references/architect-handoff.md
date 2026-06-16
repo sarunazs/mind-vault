@@ -16,7 +16,7 @@ Plan drafts the design; architect reviews it. Two distinct passes, two distinct 
 
 ## Invocation protocol
 
-Use the Agent tool to spawn a subagent with `subagent_type: architect` (if available in the host) or invoke the persona inline from `agents/AGENT_architect.md`.
+Use the Agent tool to spawn a subagent with `subagent_type: architect` (symlink channel) or **`mv:architect`** (plugin channel — the marketplace plugin namespaces it under `mv:`; mirror your invocation form, see [`../../work/references/CHANNEL_AWARE_DISPATCH.md`](../../work/references/CHANNEL_AWARE_DISPATCH.md)). **Under sprint-auto**, `/plan` is dispatched via the `Skill` tool from a worktree and may not see a `/mv:` slash form, so `source` the batch state file (`/tmp/sprint-auto-<batch-iso>-state.sh`, defined in sprint-auto S(-1) step 10) and use **`$SPRINT_AUTO_CHANNEL_PREFIX`** (→ `${SPRINT_AUTO_CHANNEL_PREFIX}architect`) rather than inferring from invocation form — else this very handoff can dispatch a bare `architect` on the plugin channel. **This is a dual-mode dispatch:** if neither token resolves on the host, invoke the persona **inline from `agents/AGENT_architect.md`** (resolved by repo path — channel-independent). Always keep that inline-path fallback — it's the channel-agnostic backstop; don't collapse it into a hard token form.
 
 Prompt shape:
 
@@ -87,7 +87,3 @@ Architect amendments to a drafted plan sometimes pair a CORRECT structural inten
 This isn't permission to ignore architect findings — the intent is load-bearing. It's permission to refine the mechanic when implementation-time evidence (manual eval, browser walk, integration-shape failure) contradicts the architect's derivation. The architect reviewed the plan against the codebase as understood at review time; implementation-time evidence is downstream of that and authoritative for mechanics.
 
 When applying a reinterpretation, prefer to surface it back into mind-vault via `/compound` after the IDEA ships — both as a refinement to the relevant skill reference (the actual mechanic that worked) and, if the misderivation cluster recurs, as a sharper architect prompt for future similar reviews.
-
----
-
-**Last Updated**: 2026-05-20
