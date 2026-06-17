@@ -16,7 +16,7 @@ This skill never commits to `main` and never merges a PR. It stages, commits to 
 **TRIGGER when:**
 
 - user says "compound this", "let's capture what we learned", "document this fix", "promote this to mind-vault", "write this up", "save this learning"
-- a review loop (`/bugbot-loop` or `/copilot-loop`) just cleared findings and there's a non-trivial lesson worth preserving — the review output file is a first-class input source (see [`references/review-finding-ingest.md`](references/review-finding-ingest.md))
+- a review loop (`/review-loop`) just cleared findings and there's a non-trivial lesson worth preserving — the review output file is a first-class input source (see [`references/review-finding-ingest.md`](references/review-finding-ingest.md))
 - a bug was just fixed and the root cause is non-obvious / recurring / cross-project
 - a pattern that kept coming up across multiple tasks finally got named
 
@@ -123,36 +123,45 @@ When the destination is inside `mind-vault/`, detect the repo's checkout path an
    - If the current branch is any feature branch (e.g. `ce-inspired-evolution`): stay on it. No new branch. No branch spam.
    - Never modify `production` / `deployment` branches; refuse if on one.
 4. **Emit the file(s).** Write the target files per step 3.
-5. **Customer-data scrub gate — MANDATORY.** Mind-vault is a cross-project knowledge store and must contain **zero project/customer-identifying data**: no real tenant slugs, customer names, account / conversation / record ids, customer-supplied filenames, customer domain hostnames, internal URLs that could identify a deployment, or any other data that wouldn't be safe in a public repo (mind-vault may be private today and public tomorrow). Run a scrub pass on the staged diff before commit:
+5. **Prior-project / customer-data scrub gate — MANDATORY (forcing function).** Mind-vault is a cross-project knowledge store and must contain **zero project/customer-identifying data** — nothing that wouldn't be safe in a public repo (private today, public tomorrow). This gate is **instruction-driven, not blacklist-driven**: there is deliberately *no maintained denylist* of names. A name blacklist's false-positive cost outweighs its value and it ages badly — a well-written instruction the model reasons from wins long-term. Recognise the *category*; do not pattern-match a list.
 
-   ```bash
-   cd <mind-vault-path>
-   git diff --no-color --staged | grep -iE \
-       '<tenant-slug-pattern>|conversation [0-9]+|record [0-9]+|account [0-9]+|/Users/[^/]+/Downloads/|customer.specific.filename|<deployment-domain>'
-   # Project-specific: also grep for customer brand names, product nicknames,
-   # internal hostnames, anything in `<project>/.gitignore` that hints at
-   # secrets-adjacent paths.
-   ```
+   **The forcing function — emit a classification before you commit. Do not skip silently.** List every proper-noun token in the staged diff (project names, repo names, client/org names, person names, hostnames, absolute paths) and classify each:
 
-   Scrub policy:
-   - **Tenant identifiers** → drop entirely or replace with generic "production tenant".
-   - **Customer record ids / conversation ids / message ids** → drop.
-   - **Customer-supplied filenames** → drop or replace with `<filename>`.
-   - **Local filesystem paths** (`/Users/<name>/...`, `/home/<name>/...`) → drop.
-   - **Customer domain hostnames** → drop or replace with `<tenant-host>`.
-   - **PR / IDEA / commit references** → KEEP (these are project provenance, expected in mind-vault per existing convention; matches the "Last Updated" footer style in other mind-vault files).
-   - **Module / class / function names** (e.g. `AttachmentSerializer`, `_serialize_batch`, `<app>/`) → KEEP (these are public-API names that future readers need; they're already grep-able from the cited PR).
+   | Token kind | Class | Action |
+   | --- | --- | --- |
+   | mind-vault's own PR/IDEA/module/function names | mind-vault-own | KEEP |
+   | any OTHER project / repo / client / org proper noun | foreign | SCRUB (generalise) |
+   | generic technical terms | generic | KEEP |
 
-   The "would this be safe in a public repo today?" test is the gate. If the answer is "no", scrub before commit.
+   A gate you can satisfy *without emitting this classification* is decorative — emit it.
 
-6. **Commit.** One commit per invocation, using the standard commit-message format (type(scope): description).
+   What "foreign" looks like (recognise the class — these are illustrations, NOT an exhaustive list):
+   - Project-name-tagged refs — `(project-x) IDEA-178`, `project-x PR #475`. ← `project-x` is a **deliberate placeholder**; never re-concretise it with a real project name (the gate's own example is the single highest-traffic re-leak vector).
+   - Full URLs to another repo (`https://github.com/<other-repo>/pull/NNN`).
+   - Real tenant / customer / org slugs, account / conversation / record / message ids, customer-supplied filenames, customer domain hostnames, internal deployment URLs.
+   - Local filesystem paths (`/Users/<name>/...`, `/home/<name>/...`).
+
+   Scrub policy (drop the tag, keep the lesson):
+   - **Foreign project / repo / client name** → generalise to a neutral descriptor ("a consuming project", "an external Django project") or an obvious placeholder (`project-x`) — never a real name.
+   - **Foreign PR / IDEA refs** → drop, or generalise the narrative ("what IDEA-178 learned" → "what the first-suite stand-up learned"). A bare `IDEA-NNN` / `PR #NNN` that resolves in mind-vault is KEPT (valid own-provenance); one tied to another project (surrounding prose names it, or it doesn't resolve here) is dropped or qualified.
+   - **Tenant / record / conversation ids, customer filenames, customer hostnames, local paths** → drop (or `<filename>` / `<tenant-host>`).
+   - **mind-vault's own module / class / function names** (`AttachmentSerializer`, `<app>/`) → KEEP (public-API names future readers need; already grep-able from the cited PR).
+   - Commit messages MAY keep source-project refs (git history is acknowledged-noisy); the **file body** must be clean.
+
+   The "would this be safe in a public repo today?" test is the gate. Answer "no" → scrub before commit.
+
+   *Optional cheap aid (NOT the enforcement mechanism):* `git diff --staged | grep -iE 'conversation [0-9]+|record [0-9]+|/Users/[^/]+/|/home/[^/]+/'` can surface obvious id/path leaks — but the classification above (model judgment, not regex) is what the gate relies on.
+
+   **Recurring drift.** Provenance accumulates back over time even with this gate. When it does, run the repeatable **provenance-scrub runbook** (in the IDEA-018 archive — grep `PROVENANCE_SCRUB_RUNBOOK`) and append a run-log entry — periodic maintenance, not a fresh IDEA each time.
+
+6. **Commit.** One commit per invocation, using the standard commit-message format (type(scope): description). **Mind-vault self-mode CHANGELOG bump:** when the destination is mind-vault itself (self-promotion, not a project-local write), patch-bump `CHANGELOG.md` in this same commit — pure `/compound` PRs increment the patch component by 1 (`vX.Y.Z → vX.Y.(Z+1)`, not a bump *to* `0.0.1`) with their own `## v` section (no IDEA → `/wrap` never runs to do it). See [`references/mind-vault-promotion.md`](references/mind-vault-promotion.md) § Self-mode CHANGELOG bump.
 7. **Push.** `git push --set-upstream origin <branch>`.
 8. **Ensure open PR.** `gh pr view <branch>` to check existence. If no PR exists, `gh pr create --title "..." --body "..."`. If one exists, append a short note to the PR body describing what this `/compound` invocation added — keeps the PR description current.
 9. **Report back.** Print the branch, commit SHA, and PR URL. Never suggest the human merge — that's theirs to do.
 
 ### 5. Cross-link and index
 
-- Every mind-vault promotion also references the project-local source that triggered it. If the learning started as a PR-review finding (from any review engine), the new skill/rule/agent entry cites the PR in its Last Updated / provenance section.
+- Every mind-vault promotion is traceable back to the project-local source that triggered it — but **foreign-project PR links and IDEA numbers go in the commit message only**, never in the skill/rule/agent file body (that's what the scrub gate enforces). In-body provenance is limited to mind-vault's own PR/IDEA refs. The commit's `git log` + body carry the foreign-project trail (review id, source PR URL, etc.).
 - Project-local solution docs reference any mind-vault assets they generalised from, so future `/compound` invocations can detect duplicates.
 - Auto-memory entries include their one-line `MEMORY.md` pointer — that's the index.
 
@@ -168,7 +177,7 @@ match the new trigger, revise the frontmatter and try again.
 
 ## Review-finding input mode
 
-When the input is a review-loop output file (`/bugbot-loop` or `/copilot-loop`), iterate each cleared finding:
+When the input is a review-loop output file (`/review-loop`), iterate each cleared finding:
 
 1. Read the finding: category, severity, file, one-line description, fix applied.
 2. Decide if it's compound-worthy: if the finding appeared the first time in this project, probably not (noise). If the same category has appeared before — grep solutions and mind-vault for prior matches — promote.
@@ -179,7 +188,7 @@ See [`references/review-finding-ingest.md`](references/review-finding-ingest.md)
 
 ## Interaction rules
 
-- **No project / customer data leaks into mind-vault — ever.** Mind-vault is a cross-project knowledge store and must contain only generic, reusable patterns. Run the customer-data scrub gate (step 5 above) on every mind-vault commit, regardless of the destination (skill / rule / agent / command / tool). The gate is mandatory, not advisory; a leak in a private repo today is a leak in a public repo tomorrow. Identifiers and IDs are out; PR / IDEA / commit references and module names are in.
+- **No project / customer data leaks into mind-vault — ever.** Mind-vault is a cross-project knowledge store and must contain only generic, reusable patterns. Run the customer-data scrub gate (§ Mind-vault promotion, step 5) on every mind-vault commit, regardless of destination (skill / rule / agent / command / tool). The gate is mandatory; a leak in a private repo today is a leak in a public repo tomorrow. Out: customer identifiers, foreign-project IDEA/PR numbers, project-name tags. In: mind-vault's own PR/IDEA refs and module/function names.
 - **Shape-C narrative probe asks three questions max.** If the user's still unsure after three, fall back to the taxonomy quiz rather than asking a fourth.
 - **Never silently promote to mind-vault.** Every mind-vault-destination write is explicit and confirmed.
 - **Never auto-merge the mind-vault PR.** `RULE_git-safety` is not negotiable.
@@ -197,15 +206,11 @@ See [`references/review-finding-ingest.md`](references/review-finding-ingest.md)
 
 - [references/routing-decision-tree.md](references/routing-decision-tree.md) — the 6-destination taxonomy, narrative-probe questions, disambiguation heuristics
 - [references/mind-vault-promotion.md](references/mind-vault-promotion.md) — full branch policy, PR maintenance, commit-message conventions for mind-vault destinations
-- [references/review-finding-ingest.md](references/review-finding-ingest.md) — parsing rules for review-loop output (engine-agnostic; same shape from `/bugbot-loop` or `/copilot-loop`), de-duplication against prior findings
+- [references/review-finding-ingest.md](references/review-finding-ingest.md) — parsing rules for review-loop output (engine-agnostic; same shape regardless of engine), de-duplication against prior findings
 - [assets/solution-template.md](assets/solution-template.md) — project-local solution doc structure
 - [assets/skill-scaffold-template.md](assets/skill-scaffold-template.md) — minimal new-skill scaffold to emit when promoting a cross-project pattern
 - [docs/guides/SPRINT_WORKFLOW.md](../../docs/guides/SPRINT_WORKFLOW.md) — full sprint-workflow explainer with the compound-routing table
 - [skills/skill-writer/SKILL.md](../skill-writer/SKILL.md) — meta-standard consulted when emitting a new skill
 - [rules/RULE_git-safety.md](../../rules/RULE_git-safety.md) — branching and commit contract honoured during mind-vault promotion
 - [skills/idea/references/IDEAS_LOCATION_STATUS.md](../idea/references/IDEAS_LOCATION_STATUS.md) — location-by-status routing; `/compound` may trigger the `idea`→archive move when post-incident routing classifies an IDEA as superseded or rejected before any execution started
-- [commands/bugbot-loop.md](../../commands/bugbot-loop.md) / [commands/copilot-loop.md](../../commands/copilot-loop.md) — the preceding review stage whose output this skill consumes (engine-specific commands; same output shape)
-
----
-
-**Last Updated**: 2026-04-30
+- [skills/review-loop/SKILL.md](../review-loop/SKILL.md) — the preceding review stage whose output this skill consumes (engine-agnostic; same output shape regardless of engine)

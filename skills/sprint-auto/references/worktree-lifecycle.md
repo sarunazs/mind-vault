@@ -1,10 +1,11 @@
 # sprint-auto — worktree lifecycle
 
-**v3.1 architecture (current)**: sprint-auto runs **one** docker stack per batch — the integration worktree's, at port offset `+30000`. Per-IDEA worktrees are pure code surfaces (no `.env`, no docker compose). All verification — per-IDEA targeted tests, per-IDEA review fix-cycles, integration union, full suite, integration review, post-propagation re-review — routes to the integration worktree's stack via the `SPRINT_AUTO_INTEGRATION_WORKTREE` env var. See [`integration-stage.md`](integration-stage.md) for the full integration-worktree contract.
+**v3.2 architecture (current)**: sprint-auto runs **one** docker stack per batch — the integration worktree's, at port offset `+30000`. Per-IDEA worktrees are pure code surfaces (no `.env`, no docker compose). All verification — per-IDEA targeted tests, per-IDEA review fix-cycles, integration union, full suite, integration review — routes to the integration worktree's stack via the `SPRINT_AUTO_INTEGRATION_WORKTREE` env var. See [`integration-stage.md`](integration-stage.md) for the full integration-worktree contract.
 
 **v1 architecture (deprecated)**: every per-IDEA worktree had its own docker stack with a per-IDEA port offset (`10000 + (idea_number % 100) * 100`). Hardware-infeasible at scale — the user explicitly redirected v3 plan toward the single-stack model because running N+1 stacks per batch was impossible on the available hardware.
 
 The bootstrap script itself supports both modes:
+
 - **v1 mode**: invoked as `tools/sprint-auto-bootstrap.sh <slug> <idea_number>` — the legacy formula derives the offset from the idea_number. Caps at `+19900`.
 - **v3.1 mode**: invoked as `tools/sprint-auto-bootstrap.sh integration-runner 0 --port-offset 30000` — explicit offset; the idea_number is a placeholder. This is what S(-1) in the v3.1 state machine uses.
 
@@ -58,7 +59,7 @@ git commit -m "chore: sprint-auto hooks for <project> (migrations + MinIO + smok
 docker-compose.override.yml
 ```
 
-Without this line, every `/sprint-auto` cycle leaves an untracked `docker-compose.override.yml` in the worktree that blocks `git worktree remove` at teardown time unless force-flagged — which (per `/wrap` step 5) hides real findings. It's an adoption-checklist item when onboarding a project to sprint-auto.
+Without this line, every `/sprint-auto` cycle leaves an untracked `docker-compose.override.yml` in the worktree that blocks `git worktree remove` at teardown time unless force-flagged — which (per `/land`'s teardown, [`WORKTREE_TEARDOWN.md`](../../land/references/WORKTREE_TEARDOWN.md)) hides real findings. It's an adoption-checklist item when onboarding a project to sprint-auto.
 
 ## The canonical script's responsibilities
 
@@ -128,6 +129,14 @@ See `skills/sprint-auto/assets/sprint-auto-hooks.sh.example` for a fuller templa
 
 **Why the hooks file is copied, not wrapped**: the content IS the project-specific part. There's nothing to delegate to a canonical version — each project's migrations, fixtures, and smoke-test URL differ. A wrapper would be a wrapper around the project's own code, which is pointless.
 
+### `post_up_init` must build EVERY runtime artefact the test suite reads — not just migrate + seed (compounded)
+
+A `post_up_init` that runs `migrate` + `seed` but **not the project's compiled-asset steps** leaves the integration stack subtly incomplete: tests that assert on a *built* artefact fail in the integration run though they pass locally. The recurring instance: **compiled translation catalogs** — an i18n project's `{% trans %}`/`gettext` strings fall back to the source language until `compilemessages` (or equivalent) runs, so any test asserting a *translated* string fails in a fresh worktree stack. Same class: collected static, built CSS/JS bundles, search-index population. Rule: `post_up_init` should reproduce the project's **full** "make it runnable" sequence (migrate → seed → compile-translations → collectstatic/build-assets → index), idempotently — mirror what a from-scratch `make start` does, not a subset. The tell is a green local suite + a handful of red "expected <translated/built> got <source/empty>" failures only in the integration run.
+
+### DB `down -v` reset between IDEAs is skippable for pytest-only IDEAs with no migrations (compounded)
+
+The per-IDEA S2-entry DB reset (`down -v` + `up` + migrate + seed, ~5 min) exists to give a main-equivalent baseline so each per-IDEA PR is independently deliverable. But its value is **nil** when (a) verification is pytest-django (which builds its *own* isolated test DB from migrations, ignoring the dev DB), (b) the IDEA ships **no migrations** (test DB builds from the existing set), and (c) Playwright/e2e — the only consumer of the dev DB — is absent or gated off. In that intersection the prior IDEA's run never mutated what the next IDEA's tests read, so the reset is pure wall-clock overhead. Keep the reset when any of those don't hold (migrations present, e2e against the live dev tenant, or a non-pytest verification path). Log the skip + the reason rather than dropping it silently.
+
 ## Worktree naming
 
 ### Per-IDEA worktrees (code-surface only in v3.1)
@@ -158,27 +167,22 @@ Max remapped port: `9300 + 30000 = 39300` — in registered-port range, below ep
 
 Formula: `10000 + (idea_number % 100) * 100`. Caps at `+19900`. Collisions on modulo-100 alignment. v3.1's collapse to a single integration stack sidesteps the formula's cap entirely. Retained for backward compatibility — projects not yet adopting v3.1 still use this formula.
 
-| IDEA | offset (v1) | web (8000 →) | db (5432 →) |
-|---|---|---|---|
-| 050 | +15000 | 23000 | 20432 |
-| 099 | +19900 | 27900 | 25332 |
-| 100 | +10000 | 18000 | 15432 |
-| 150 | +15000 | 23000 | 20432 — **collides with 050** |
+| IDEA | offset (v1) | web (8000 →) | db (5432 →)                   |
+| ---- | ----------- | ------------ | ----------------------------- |
+| 050  | +15000      | 23000        | 20432                         |
+| 099  | +19900      | 27900        | 25332                         |
+| 100  | +10000      | 18000        | 15432                         |
+| 150  | +15000      | 23000        | 20432 — **collides with 050** |
 
 A latent bug in v1: 6+ IDEAs at offsets `+10000, +20000, ..., +60000` push max remapped port (9300+60000 = 69300) past the 16-bit hard ceiling. v3.1 sidesteps it; if anyone re-introduces a multi-stack scheme later, the formula needs a bound check.
 
 ## Teardown policy
 
-### v3.1
+### v3.2 (current)
 
-**Per-IDEA worktrees**: nothing to tear down (no stack ever existed). Worktree filesystem stays for code-surface inspection. Cleaned up by the human's `/wrap NNN` post-merge teardown:
+After the human merges the single `[INTEGRATION]` PR, one command from the primary tree — `/land --integration sprint-auto-<batch-iso>` — tears down the whole batch (see `skills/land/SKILL.md` § `--integration` mode).
 
-```bash
-git worktree remove ../<project>-auto-<slug>
-git branch -d auto/<slug>
-```
-
-**Integration worktree**: stops the stack at S11.13 (`docker compose down`, NOT `-v`; volumes preserved for inspection). The human's `/wrap NNN` for the **last-of-batch** IDEA tears down the rest:
+**Integration worktree**: stops the stack at S11.13 (`docker compose down`, NOT `-v`; volumes preserved for inspection until teardown). `/land --integration` then removes the rest:
 
 ```bash
 cd $integration_worktree
@@ -188,7 +192,14 @@ git worktree remove $integration_worktree
 git branch -d integration/sprint-auto-<batch-iso>
 ```
 
-See [`integration-stage.md`](integration-stage.md) § "Integration teardown" and `skills/wrap/SKILL.md` § Step 5 last-of-batch detection.
+**Per-IDEA worktrees**: nothing to tear down (no stack ever existed); the same `/land --integration` call removes each `auto/<slug>` worktree + branch (the per-IDEA PRs auto-closed as merged ancestors when the \[INTEGRATION\] PR merged):
+
+```bash
+git worktree remove ../<project>-auto-<slug>
+git branch -d auto/<slug>
+```
+
+See [`integration-stage.md`](integration-stage.md) § "Integration teardown" and `skills/land/SKILL.md` § `--integration` mode.
 
 ### v1 (legacy)
 
@@ -205,7 +216,3 @@ If `tools/sprint-auto-bootstrap.sh` doesn't exist in the project at all, the `/s
 Tests that depend on fixtures, buckets, or indices will fail in `/work`'s verification, and the IDEA will be skipped. This is why the preflight warns loudly when the wrapper is missing and the scripted path is strongly preferred for overnight batches.
 
 For v3.1, the inline fallback only applies to the integration worktree (per-IDEA worktrees never call the script). If the integration bootstrap falls back to the inline minimal mode, it uses `--port-offset 30000` semantics (offset `+10000` is the fallback's hard-coded value — collides with conventional v1 worktrees, so the fallback should be replaced with the proper script promptly).
-
----
-
-**Last Updated**: 2026-04-27

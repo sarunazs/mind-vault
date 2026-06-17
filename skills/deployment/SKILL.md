@@ -1,7 +1,7 @@
 ---
 name: deployment
 description: Deploy Docker Compose web applications across any project — branch strategy, change-aware scripts, database backup + rollback safety, screen-session remote execution, Let's Encrypt SSL, health checks, and CI/CD wiring.
-license: MIT
+license: Apache-2.0
 metadata:
   author: mind-vault
   version: '2.0'
@@ -457,9 +457,9 @@ The deploy shape is identical for Django, Rails, Express, FastAPI, Phoenix — o
 - [references/DJANGO_DEPLOYMENT.md](references/DJANGO_DEPLOYMENT.md) — Django-specific optimisations (migrations, collectstatic, ASGI)
 - [references/HARDENING.md](references/HARDENING.md) — SSH, UFW, fail2ban, unattended upgrades (run before first deploy)
 - [references/CONTAINER_DNS_NSS.md](references/CONTAINER_DNS_NSS.md) — `getaddrinfo` shadowing public DNS inside containers; anchor case: `sync_domains` silent drop on fresh Debian VPS when hostname matches domain
-- [references/SHELL_INSTALLERS.md](references/SHELL_INSTALLERS.md) — authoring + review patterns for `tools/install-*.sh`; 15 patterns (pipefail family, chown, marker blocks, opt-out sweep, case-vs-grep security validation, etc.) distilled from review-loop cycles across PRs #55/#58/#59
+- [references/SHELL_INSTALLERS.md](references/SHELL_INSTALLERS.md) — authoring + review patterns for `install/install-*.sh`; installer-specific catalog (chown, marker blocks, opt-out sweep, target-user resolution) distilled from review-loop cycles across PRs #55/#58/#59, with the language-general entries stubbed down into the `shell` layer
+- [references/ROOTLESS_DOCKER.md](references/ROOTLESS_DOCKER.md) — rootless Docker deploys: non-login deploy shells (`screen … bash -c`, cron, systemd) miss the profile `DOCKER_HOST` and hit the dead rootful socket → idempotent deploy misreads "first-time". Fix with `docker context use rootless` (shell-independent) + a `DOCKER_HOST` auto-detect helper
+- [shell skill](../shell/SKILL.md) — base shell-language layer beneath this one (strict-mode hazards, quoting/input hygiene, traps/locking, maintenance-script contract); reach down for script mechanics instead of duplicating
 - [django skill](../django/SKILL.md) — backend patterns that interact with deploy (migrations, collectstatic, ASGI)
 - [RULE_git-safety](../../rules/RULE_git-safety.md) — rollback is a human-operated procedure
 - [Docker Compose docs](https://docs.docker.com/compose/)
-
-**Last Updated**: 2026-04-29

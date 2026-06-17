@@ -1,7 +1,7 @@
 ---
 name: django
 description: Apply cross-project Django backend conventions — BaseModel abstractions, DRF viewsets, ORM optimisation (select_related / prefetch_related), multi-tenancy boundaries, generic-FK patterns, permission probes, and translation workflow — before hitting templates.
-license: MIT
+license: Apache-2.0
 metadata:
   author: mind-vault
   version: '5.0'
@@ -133,7 +133,11 @@ class IndexableSerializer(serializers.ModelSerializer):
 
 The user articulated the convention during code review: *"I'm always making fields nullable if blankable to avoid forcing empty string value, also if it's not nullable, field requires default value for additive migration."* That sentence is the rule.
 
-### Multi-tenancy vs. ForeignKey boundaries
+### Data isolation / scoping boundary
+
+The universal craft concern: never leak across the isolation boundary — scope every
+query to the caller's data. Every backend has *some* answer here (even "single-tenant,
+no scoping"). Django fills it with the schema-vs-FK decision below.
 
 For projects using schema-based isolation (`django-tenants`):
 
@@ -194,6 +198,24 @@ items = (
 
 Fixes: capture browser-supplied MIME at upload into a dedicated DB column (`mime_type`) by reading `self.file.file.content_type` (NOT `self.file.content_type`), strip `;codecs=…`/`;charset=…` suffixes, prefer the column on read; pair the canonical set + consumer dict with a module-scope `assert` that fires at import time so missing entries crash `python manage.py check` rather than the first user-facing upload. Mechanics — full save() override, backfill migration with `RunPython.noop` reverse, drift-guard assert example — are in [`references/FILEFIELD_MIME_CAPTURE.md`](references/FILEFIELD_MIME_CAPTURE.md). Read that reference when this section fires.
 
+### Input-validation boundary
+
+Untrusted input is validated **at the edge** — serializer, form, or consumer — never
+deeper. Django's validation surface is spread across several patterns; this anchor
+indexes them so a generic agent resolves one rule:
+
+- **Blankable CharField — `null=True` over `default=""`** above — model-contract
+  nullability + the DRF `allow_null`/`required` mirror that honours it.
+- **Formsets with `UniqueConstraint`** below — formset-level `clean()` + view-level
+  `try/except IntegrityError` belt-and-braces.
+- **Sensible-date validation** (see **Date / time / timezone** below) — shared min/max
+  constants + `validate_sensible_date`.
+- **Per-message resource caps** — enforce at the WebSocket consumer / view layer where
+  `request.user` and the org are visible (see [`references/ASYNC_WEBSOCKET.md`](references/ASYNC_WEBSOCKET.md)).
+
+The DRF serializer / Django form is the validation source of truth; do not re-validate
+(or skip validating) deeper in the call stack.
+
 ### DRF — base viewset and permissions
 
 ```python
@@ -217,7 +239,7 @@ class IsResourceOwner(BasePermission):
         return obj.author == request.user
 ```
 
-### Permission DRY-ness via probe pattern
+### Permissions/authorization
 
 **Never duplicate authorisation logic** between DRF `BasePermission` classes and plain Django views / forms / template tags. The DRF permission class is the single source of truth.
 
@@ -346,7 +368,7 @@ For URL-encoded `DATABASE_URL` parsing and typed casting, use `django-environ` o
 
 **Fires when** a list (blocked MIMEs, blocked extensions, IP allowlists, feature flags) needs all three of: per-deployment override without code change, O(1) hot-path membership lookup, and immutability against accidental request-handler mutation.
 
-The shape: parse a comma-separated env var into a `frozenset` at settings-import time, with a sane default literal embedded in code. Five details earn their keep — replace-not-extend semantics (env var REPLACES the default; `.env.template` must list the full default), normalise on parse not call-site, `filter(None, ...)` to drop empty entries from trailing commas, `frozenset` not `set` so handler `.add()` raises, extensionless guard (`'.' in filename` before `rsplit('.', 1)[-1]` to avoid `'Makefile'`-style collisions). Mechanics — full settings.py block with the BLOCKED_UPLOAD_MIMES + EXTENSIONS shape, hot-path `is_blocked` helper, all five earn-their-keep notes, when-NOT-to-use guidance for small-cardinality / per-tenant cases — are in [`references/ENV_DRIVEN_ALLOWLISTS.md`](references/ENV_DRIVEN_ALLOWLISTS.md). Read that reference when this section fires.
+The shape: parse a comma-separated env var into a `frozenset` at settings-import time, with a sane default literal embedded in code. Five details earn their keep — replace-not-extend semantics (env var REPLACES the default; `.env.template` must list the full default), normalise on parse not call-site, `filter(None, ...)` to drop empty entries from trailing commas, `frozenset` not `set` so handler `.add()` raises, extensionless guard (`'.' in filename` before `rsplit('.', 1)[-1]` to avoid `'Makefile'`-style collisions). Mechanics — full settings.py block with the BLOCKED_UPLOAD_MIMES + EXTENSIONS shape, hot-path `is_blocked` helper, all five earn-their-keep notes, when-NOT-to-use guidance for small-cardinality / per-tenant cases — are in [`references/ENV_DRIVEN_ALLOWLISTS.md`](../python/references/ENV_DRIVEN_ALLOWLISTS.md). Read that reference when this section fires.
 
 ### Docker-generated migrations — ownership bypass
 
@@ -371,7 +393,7 @@ makemigrations:
 
 The contract: every static-file change requires `make static && make restart-web`. Same shape as env-var change-then-recreate (`docker compose restart` ≠ env reload; need `up -d --force-recreate`) — "the disk changed but the process is still on the old view." Mechanics — full settings.py STORAGES backend toggle for DEBUG vs not, ❌/✅ Makefile target shapes, four-step symptom-during-debug diagnostic, applicability scope (any post-processed asset; staging/prod-only) — are in [`references/MANIFEST_STATIC_FILES_STORAGE.md`](references/MANIFEST_STATIC_FILES_STORAGE.md). Read that reference when this section fires.
 
-### ORM optimisation — N+1 prevention
+### ORM eager-loading
 
 ```python
 # ❌ N+1 storm — one query per article to fetch author
@@ -398,6 +420,8 @@ for article in articles:
 Article.objects.filter(status="draft").update(status="published")
 ```
 
+**Caveat — bulk ops bypass the model layer.** `.update()` / `bulk_create` / `bulk_update` issue SQL directly: they skip `save()`, `pre_save`/`post_save` signals, and `auto_now`/`auto_now_add`. A `.update(status=…)` leaves `updated_at` frozen — set it explicitly (`.update(status=…, updated_at=timezone.now())`). See [`references/BULK_ORM_BYPASSES_MODEL_LAYER.md`](references/BULK_ORM_BYPASSES_MODEL_LAYER.md) for the full skip-list, the manual-side-effect options, and the reviewer grep.
+
 **When NOT to optimise:** small result sets (\<10 rows), related objects not accessed in the code path, measured impact negligible. Premature `select_related` over-fetches columns and can make things worse.
 
 **Assert query count in tests:**
@@ -412,6 +436,15 @@ class ArticleTest(TestCase):
             for article in articles:
                 list(article.tags.all())
 ```
+
+### Background jobs
+
+Deferred / async work runs on **Celery + Redis** — task definition, retries, and
+multi-tenant task routing live in [`references/CELERY.md`](references/CELERY.md) (+
+[`references/MULTI_TENANT_CELERY.md`](references/MULTI_TENANT_CELERY.md)). When a task
+mutates rows in bulk, mind the model-layer-bypass caveat under **ORM eager-loading**
+above (`.update()` skips `save()`/signals/`auto_now`). Django 6's native background
+workers are on the watch list but Celery is the current convention.
 
 ### Formsets with `UniqueConstraint`
 
@@ -478,6 +511,16 @@ def test_error_message(self):
 ```
 
 Without this, tests pass locally but fail in CI when the container locale differs, or when translations are incomplete. See [references/TESTING.md](references/TESTING.md).
+
+### Testing conventions
+
+Test discipline for this stack — query-count asserts (`assertNumQueries`, see **ORM
+eager-loading** above), locale enforcement (see **Testing UI strings under locale**
+above), state isolation, fixture design, and multi-tenant schema-pooled test cases —
+is detailed in [`references/TESTING.md`](references/TESTING.md). Multi-tenant test
+teardown (real-tenant schema drop, raw-SQL deletes not ORM cascade) is in
+[`references/MULTI_TENANT.md`](references/MULTI_TENANT.md). Run focused, fully-qualified
+test paths per the [`surgical-tdd`](../surgical-tdd/SKILL.md) skill, not the full suite.
 
 ### `verbose_name` discipline for AI-driven CRUD models
 
@@ -561,9 +604,12 @@ When NOT to use: free-form generation tasks (chat replies, brainstorming) where 
 
 - [Cross-entity session-filter](references/CROSS_ENTITY_SESSION_FILTER.md) — fan-out invalidation when a cross-entity field's change leaves derived per-entity state stale across sibling session entries; full `_clear_tags_from_other_entity_sessions` helper + two safety gates
 - [FileField MIME capture](references/FILEFIELD_MIME_CAPTURE.md) — `FieldFile.content_type` is empty by design; capture browser MIME at upload + import-time `assert` that locks the canonical set ↔ consumer dict against drift
-- [Env-driven allowlists / denylists as `frozenset`](references/ENV_DRIVEN_ALLOWLISTS.md) — three-property pattern (env override + O(1) hot-path + immutable global), full BLOCKED_UPLOAD_MIMES + EXTENSIONS shape, replace-not-extend env semantics
+- [Env-driven allowlists / denylists as `frozenset`](../python/references/ENV_DRIVEN_ALLOWLISTS.md) — three-property pattern (env override + O(1) hot-path + immutable global), full BLOCKED_UPLOAD_MIMES + EXTENSIONS shape, replace-not-extend env semantics
 - [`ManifestStaticFilesStorage` restart contract](references/MANIFEST_STATIC_FILES_STORAGE.md) — `collectstatic` writes the new file + manifest, but the running app server's `{% static %}` cache holds the OLD hash; require `make static && make restart-web` for changes to land for users
-- [Multi-Tenant Architecture](references/MULTI_TENANT.md) — schema-per-tenant isolation (django-tenants)
+- [Multi-Tenant Architecture](references/MULTI_TENANT.md) — schema-per-tenant isolation (django-tenants); incl. cross-schema cascade teardown for tests that create a real tenant (drop-schema + raw-SQL deletes, not ORM cascade)
+- [Idempotent seed / management commands](references/IDEMPOTENT_SEED_COMMANDS.md) — top-up idempotency trio (attach M2M/FK not only on `created`; correct privileged-user flags on existing rows; globally-unique-conflict no-abort) + DEBUG prod-guard on privileged-user seeds
+- [Resource lifecycle — drop vs ensure](references/RESOURCE_LIFECYCLE_DROP_VS_ENSURE.md) — a destructive op (drop/clear/purge an index, cache, table, bucket, scratch dir) silently undoes itself unless you audit EVERY re-creation path: lazy ensure-on-use, first-use create, deploy/bootstrap ensure. Re-point them at the new target or guard them; prove with a post-drop read, not "delete was called"
+- [Splitting a flat module into a package (AST extraction)](../python/references/MODULE_SPLIT_AST_EXTRACTION.md) — byte-exact `ast`-driven flat-module → package split (bucket-by-prefix, leading-comment + PEP-224 attr-docstring capture, coverage assertion, blank-line-only `autopep8`, `pyflakes` import trim); Python-general recipe that owns the `RULE_rename-before-drop` forced-atomic-member sequencing (the rule points here)
 - [Async WebSocket](references/ASYNC_WEBSOCKET.md) — Channels consumers and routing
 - [Celery Background Tasks](references/CELERY.md) — async job processing
 - [Logging Patterns](references/LOGGING.md) — structured logging and audit trails
@@ -575,12 +621,15 @@ When NOT to use: free-form generation tasks (chat replies, brainstorming) where 
 - [django-frontend](../django-frontend/SKILL.md) — HTMX / Alpine / Bulma frontend pairing
 - [deployment](../deployment/SKILL.md) — production deployment patterns
 - [surgical-tdd](../surgical-tdd/SKILL.md) — focused test execution
-- [`RULE_i18n-workflow`](references/I18N_WORKFLOW.md) — hard rules for translations; FORCE_SYNC_MSGIDS overwrite-existing-msgstr gotcha; don't-translate-dev-notes; blocktrans `%(var)s` placeholder format
-- [Form-invalid status](references/FORM_INVALID_STATUS.md) — Django's default `form_invalid` returns 200 + form-with-errors, NOT 422; status-only gating closes HTMX modals on validation failure; fix via `HTMXFormStatusMixin` or `HX-Trigger` header gate
+- [`RULE_i18n-workflow`](references/I18N_WORKFLOW.md) — hard rules for translations; FORCE_SYNC_MSGIDS overwrite-existing-msgstr gotcha (+ stale-after-rename audit); don't-translate-dev-notes; blocktrans `%(var)s` placeholder format; GNU gettext singular/plural hash collision (a blocktrans refactor silently breaks pre-existing `{% trans "Noun" %}` callers; fix = always-plural label + count separator, or `msgctxt` disambiguation); always-plural button labels via verb form (`Add X`) to sidestep adjective-noun gender agreement in inflected locales
+- [Forms — cross-skill index](../django-frontend/references/FORMS_INDEX.md) — entry point for form work across django + django-frontend (rendering / status+swap / validation / formsets / uploads / FK validation); bridges to the template-side refs without a grep.
+- [Form-invalid status](references/FORM_INVALID_STATUS.md) — `form_invalid` returns 200 by default; HTMX-aware views need 422 (via `HTMXFormStatusMixin`) OR `HX-Trigger`-gated modal close. Paired client `htmx:beforeSwap` listener required to let HTMX swap 422 bodies.
+- [ModelForm `_post_clean` trap](references/MODELFORM_POST_CLEAN_TRAP.md) — `is_valid()` writes `cleaned_data` INTO `self.instance` via `construct_instance`, so `instance.field` reads after that return the POST value. Defeats change-detection; `form.changed_data` doesn't substitute. Fix: snapshot before bind.
+- [Bulk ORM bypasses the model layer](references/BULK_ORM_BYPASSES_MODEL_LAYER.md) — `.update()` / `bulk_create` / `bulk_update` skip `save()`, `pre_save`/`post_save` signals, and `auto_now`/`auto_now_add`; the classic bug is a `.update(status=…)` leaving `updated_at` frozen (fix: set it explicitly). Skip-list, manual-side-effect options, reviewer grep for `auto_now`/`@receiver`/`def save(` siblings.
+- [Tenant-scoped FK validation](references/TENANT_SCOPED_FK_VALIDATION.md) — validate-and-prune helpers walking shared-schema `org_id`-carrying models must explicitly `.filter(org_id=…)`; schema routing covers only tenant-schema models.
+- [Permission-gate probe](references/PERMISSION_GATE_PROBE.md) — when re-implementing a view's authorization elsewhere (fragment / 2nd endpoint / command), replicate the *effective* gate (`permission_classes` AND `get_queryset` AND `dispatch`/`get_object`), not the coarse declared class — copying the class alone silently widens the gate; the inverse (legacy gate authorizes on historical authorship → fix, don't copy) + re-gate-the-legacy-endpoint + UI-bypass test + the dual (server-gated but the affordance still leaks — thread the permission flag to the template or drop the dead "for symmetry" param) + the anonymous dual on public-content apps (blanket anon short-circuit breaks public surfaces — anon flows through the same resolver via `visible_to(None)`; symptom: cold-load works, client-side re-fetch breaks)
 - [`CSRF_TRUSTED_ORIGINS`](references/CSRF_TRUSTED_ORIGINS.md) — Django 4.0+ requires this even for same-origin POSTs behind a proxy on a non-standard port; admin login returns 403 "Origin checking failed" out of the box without it; derive from `HTTP_PORT` in dev
 - [Linting split settings](references/SETTINGS_LINTING.md) — pyflakes false-positives on `from .base import *` and doesn't honor `# noqa`; three options (exclude / switch to ruff / refactor) with trade-offs
 - [Django Documentation](https://docs.djangoproject.com/)
 - [Django REST Framework](https://www.django-rest-framework.org/)
 - [Django ORM Query Optimisation](https://docs.djangoproject.com/en/stable/topics/db/optimization/)
-
-**Last Updated**: 2026-05-01
