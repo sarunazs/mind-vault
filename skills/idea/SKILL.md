@@ -54,7 +54,7 @@ ls docs/ideas/IDEA-*.md docs/archive/*/IDEA-*.md 2>/dev/null \
 
 **Phase B — emit the file.**
 
-1. Read [`assets/idea-template.md`](assets/idea-template.md) and substitute the frontmatter fields. Fill `status: idea`, `created: YYYY-MM-DD` (today), `completed: null`.
+1. Read [`assets/idea-template.md`](assets/idea-template.md) and substitute the frontmatter fields. Fill `status: idea`, `created: YYYY-MM-DD` (today), `completed: null`. When filling `{{NON_GOALS}}`: a non-goal justified by a claim about the surrounding context ("fine while all callers are trusted") must state its invalidating condition, not just the reason — see [`skills/plan/references/DEFERRAL_EXPIRY_TRIGGERS.md`](../plan/references/DEFERRAL_EXPIRY_TRIGGERS.md).
 2. Write to `<project>/docs/ideas/IDEA-NNN-<slug>.md` per [`RULE_ideas-location-status`](references/IDEAS_LOCATION_STATUS.md) — `status: idea` always starts in `docs/ideas/`. Create the directory if missing.
 3. Append an index line to `<project>/docs/ideas/README.md` under the matching priority heading. Create the index file with the standard skeleton if missing (see [Index maintenance](#3-index-maintenance)).
 4. Print the created path + the index line for user verification.
@@ -73,7 +73,7 @@ When invoked with a slug argument that matches an existing file (`/idea sprint-w
 | Transition | Action |
 | --- | --- |
 | `idea` → `in-progress` | `mkdir docs/archive/YYYY-MM-idea-NNN-<slug>/` + `git mv docs/ideas/IDEA-NNN-<slug>.md <dir>/IDEA-NNN-<slug>.md` + `status: in-progress`. Usually triggered by `/plan`, not directly. |
-| `idea` → `superseded` \| `rejected` | Same move (fresh archive dir, `YYYY-MM` = rejection month) + `status: superseded \| rejected` + `superseded_by: NNN` if known. |
+| `idea` → `superseded` \| `rejected` | Same move (fresh archive dir, `YYYY-MM` = rejection month) + `status: superseded \| rejected` + `superseded_by: "NNN"` if known. |
 | `in-progress` → `complete` \| `superseded` \| `rejected` | **Frontmatter-only.** File stays in its archive dir. Triggered by `/work` (on merge) or `/compound` (on rejection). |
 | Reverse (`complete`/`superseded` → active) | Refuse by default. Require explicit `--resurrect` flag; reviewed by human; may involve `git mv` back to `docs/ideas/` and creating a new IDEA number for the resumed work. |
 
@@ -140,6 +140,80 @@ Rebuild the index from scratch if it gets out of sync: scan both dirs, read each
 ✅ DO: `IDEA-001`, `IDEA-042`, `IDEA-112` (zero-padded to 3 digits).
 ❌ DON'T: `IDEA-1`, `IDEA-42`, `IDEA-0042` (inconsistent width).
 
+#### ⚠️ ALWAYS QUOTE the id in frontmatter — `id: "035"`, never `id: 035`
+
+The zero-padding above is what makes this bite. **A bare zero-padded id is YAML-1.1 OCTAL**, so
+`id: 035` parses to the integer **29** — silently, with no error. Combined with `related: [007, 013]`,
+`depends_on:`, and `supersedes:` (also bare id lists), a project's frontmatter quietly reports the
+wrong idea numbers.
+
+**It is a sub-100 problem, which is why it survives.** Precisely, for ids `001`–`099`:
+
+| ids | count | result |
+|---|---|---|
+| `010`–`077`, all digits `0`–`7` | **56** | **wrong value** — `035`→`29`, `020`→`16`, `016`→`14`. The dangerous set. |
+| `001`–`007` | 7 | int `1`–`7` — value right, type wrong; a `zfill(3)` recovers them. |
+| any id containing an `8` or `9` (`008`, `029`, `099`) | 36 | stays a **string** — correct **by luck** (8/9 are invalid octal, so no coercion). |
+| `100`+ | — | no leading zero → safe. |
+
+So a young project is wrong on most of its ideas and a mature one looks fine — **the bug ages out before
+anyone catches it.**
+
+**The collision is subtle.** Raw, `035`→`29` (int) and `029`→`'029'` (str) are *different* dict keys. But
+normalise them to 3 digits — `str(v).zfill(3)`, the obvious move when building a status table — and `29`
+becomes `'029'`, which **collides with the real IDEA-029**. One silently overwrites the other. That is
+the actual observed failure.
+
+It also stays invisible because **nothing in the workflow parses idea frontmatter** — `/idea` writes it,
+humans read it, and YAML never gets a chance to raise. It only surfaces the moment someone writes a
+script or an agent builds a status table, and then it does so as *silently wrong data*, not an error:
+
+```python
+# The failure mode. No exception — the wrong answer.
+yaml.safe_load('id: 035')['id']            # -> 29     (int)
+yaml.safe_load('id: 029')['id']            # -> '029'  (str — 9 is invalid octal, so no coercion)
+str(29).zfill(3)                            # -> '029'  ← now IDEA-035 collides with IDEA-029
+```
+
+**Rules:**
+- Write `id: "{{NNN}}"` — quoted, always.
+- Quote id lists too: `related: ["007", "013"]`, `depends_on: ["015"]`, `supersedes: ["012"]` — and
+  the scalar `superseded_by: "112"` when set.
+- **Quote `title:` as well.** Separate bug, same root cause (unquoted scalars): an inner colon —
+  `title: Reference bootstrap — read-only App credential (pilot: client.example.com)` — raises
+  `ScannerError: mapping values are not allowed here` and kills the *whole* frontmatter block, not just
+  the title. If the title itself contains a double quote, escape it (`title: "Fix \"ghost\" buttons"`)
+  or rephrase — never emit an unescaped `"` inside the quoted title.
+- When reading ids programmatically, **derive from the FILENAME** (`IDEA-(\d+)-`), not the frontmatter —
+  it is octal-immune and works on files whose frontmatter is broken.
+
+#### Migrating an existing project (do this once, per project)
+
+Any project onboarded before this fix has bare ids. Migrate all of them to `"0XX"` strings:
+
+Expect **two** legacy conventions in the same project — a bare `id: 017` *and* a prefixed
+`id: IDEA-017` (only the bare one octal-misparses, but normalise both so the id always equals the
+filename number). This `sed` handles both and is idempotent:
+
+```bash
+# From the project root. Covers both idea locations. Normalises `017`, `IDEA-017`, `"IDEA-017"` → "017".
+find docs/ideas docs/archive -name 'IDEA-*.md' -print0 2>/dev/null | xargs -0 --no-run-if-empty \
+  sed -i -E 's/^id:[[:space:]]*"?(IDEA-)?([0-9]{1,3})"?[[:space:]]*$/id: "\2"/'
+
+# Find unquoted titles with a colon followed by a space (or at line end) — these RAISE and kill the
+# whole frontmatter (a colon inside a word, like `1:1`, is legal YAML). Fix by hand (quote the
+# title); a blind sed here would maul titles that legitimately contain quotes.
+grep -rlE '^title:[[:space:]]*[^"'"'"'[:space:]].*:([[:space:]]|$)' docs/ideas docs/archive --include='IDEA-*.md' 2>/dev/null || true
+
+# Verify. Also checks the zfill(3) COLLISION, the id LISTS and superseded_by — which the migration
+# sed above deliberately does not touch, so they need eyes (or this) regardless.
+python3 "$SKILL_DIR"/assets/check-idea-frontmatter.py .    # SKILL_DIR = this skill's directory
+```
+
+Also hand-quote any `related:` / `depends_on:` / `supersedes:` lists (`[007, 013]` → `["007", "013"]`),
+any set `superseded_by:` (`112` → `"112"`), and any `title:` containing a colon — the `sed` above
+deliberately only touches `id:`, since those fields need judgement.
+
 ## When NOT to use these patterns
 
 - **Mind-vault itself is not a target project.** The sprint workflow runs against projects that consume mind-vault. Inside mind-vault, ideas about mind-vault's own evolution live in `mind-vault/docs/ideas/` — the skill treats mind-vault as just another project when explicitly invoked there (e.g. for dogfooding).
@@ -150,7 +224,11 @@ Rebuild the index from scratch if it gets out of sync: scan both dirs, read each
 ## References
 
 - [assets/idea-template.md](assets/idea-template.md) — the verbatim template written to disk
+- [assets/check-idea-frontmatter.py](assets/check-idea-frontmatter.py) — re-runnable guard for the
+  YAML-octal id trap (quoting, filename match, zfill collisions, id lists). Run it after any `/idea`
+  capture, not just once at migration — some implementations still emit unquoted ids.
 - [references/update-semantics.md](references/update-semantics.md) — detailed rules for editing an existing IDEA file
+- [skills/plan/references/DEFERRAL_EXPIRY_TRIGGERS.md](../plan/references/DEFERRAL_EXPIRY_TRIGGERS.md) — condition form for context-justified non-goals; an "acceptable while X" note that omits the invalidating condition can never fire
 - [skills/idea/references/IDEAS_LOCATION_STATUS.md](references/IDEAS_LOCATION_STATUS.md) — location-by-status routing contract, including the `git mv` semantics for status transitions
 - [docs/guides/SPRINT_WORKFLOW.md](../../docs/guides/SPRINT_WORKFLOW.md) — full sprint-workflow explainer with authoritative schemas
 - [skills/plan/SKILL.md](../plan/SKILL.md) — next stage; consumes the IDEA file and triggers `idea` → `in-progress` move

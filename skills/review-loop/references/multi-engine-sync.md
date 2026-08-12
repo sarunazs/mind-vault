@@ -4,6 +4,8 @@ When `|ENGINES| > 1` in the review-loop invocation, the orchestrator at [`SKILL.
 
 The rationale: each push invalidates pending reviews of the prior SHA — without sync, bugbot's pending review of SHA-A becomes stale the moment a copilot-triggered fix lands on SHA-B, forcing bugbot to re-scan from scratch (and vice-versa).
 
+The Phase 4 `Monitor` accelerator's **`all-done`** trigger is exactly this sync gate in event form — it fires only when *every* engine reaches `DONE` for the head SHA, never on a single engine finishing early. See [`MONITOR_ACCELERATION.md`](MONITOR_ACCELERATION.md).
+
 ## Trade-off escape hatch — proceed with subset of engines when others stall
 
 Hard "wait for slowest" risks blocking the loop indefinitely if one engine hangs. The orchestrator MUST trip out of strict sync under these conditions:
@@ -15,7 +17,7 @@ Hard "wait for slowest" risks blocking the loop indefinitely if one engine hangs
 | Copilot service-errored 3× consecutive | Third consecutive error | Hand back to user — durable service issue, can't resolve from the loop. |
 | Claude stalled | Claude's Actions job `STATUS=in_progress` (RUNNING) past observed latency on `last_push_sha` — see [`engine-claude.md`](engine-claude.md) § Failure modes | Proceed with other engines' findings if any. **Don't retrigger while it's RUNNING.** If this is claude's **first** review still in-flight, also do NOT fire `claude_retrigger.sh` on the next fix push — claude hasn't posted, so the skip-no-ops precondition is unmet and the push's `synchronize` auto-run carries its first review (an explicit retrigger would double-run). Only **once claude has posted ≥1 review** does the explicit Phase-3 retrigger become the path to a fresh post-fix verdict (see [`engine-claude.md`](engine-claude.md) § A7). Surface in hand-back if it never recovers. |
 | Claude action not installed | `CLAUDE_NOT_INSTALLED=true` (no `claude-code-review.yml` workflow on the repo) | In a multi-engine run, claude self-excludes from the **default** set; proceed with the other engines. On an **explicit** `...,claude` run, surface loudly in hand-back ("run `/install-github-app`"), never HUNG. |
-| One engine DONE+clean + another still RUNNING | one engine `DONE` with zero active findings for `last_push_sha` + another engine's check-run/Actions job still `queued`/`in_progress` past idle-poll threshold | Wait up to `max_idle_polls × 270s`; if the RUNNING engine never reaches `DONE`, hand back with the cleared engine(s)' CLEAN status documented prominently. |
+| One engine DONE+clean + another still RUNNING | one engine `DONE` with zero active findings for `last_push_sha` + another engine's check-run/Actions job still `queued`/`in_progress` past idle-poll threshold | Wait up to the Phase 4 idle backstop (`max_idle_polls` × the backstop poll cadence — both defined in [`SKILL.md`](../SKILL.md) § Hard bounds + Phase 4 step 1; do not re-state the literals here, they change together); if the RUNNING engine never reaches `DONE`, hand back with the cleared engine(s)' CLEAN status documented prominently. |
 
 ## Sync state — scratch-file fields per engine
 
@@ -36,9 +38,14 @@ no_progress_map:
   bugbot:  { <category>: <count> }
   claude:  { <category>: <count> }
   copilot: { <category>: <count> }
+# Prose-only-engine slots (claude — IDEA-022; see SKILL.md § Per-engine model-judge):
+claude_judge_verdict: CLEAN|BLOCKING|NON_BLOCKING @ <sha>   # cached judge result per head SHA
+claude_non_blocking: [ { title, why, where } ]             # recorded non-blocking items, pending disposition
 ```
 
 Each engine's `<engine>_review_state` is tracked independently — under multi-engine mode one engine can be `DONE` while another is still `RUNNING`. The orchestrator waits for the slowest to reach `DONE` before reading any verdict (the Phase 4 sync gate). For `claude`, `<engine>_review_state` is synthesized from its **Actions job** status (no native check-run — see [`engine-claude.md`](engine-claude.md)), but the orchestrator reads it through the same RUNNING/DONE state machine.
+
+**Convergence-gate composition with a prose-only engine (claude — IDEA-022).** claude's adapter posts no clean/findings verdict; once it's `DONE`, the SKILL.md § Per-engine model-judge emits `{CLEAN | BLOCKING | NON_BLOCKING[]}`. For the all-engines convergence gate, **`CLEAN` and `NON_BLOCKING`-only both count as clean** — only `BLOCKING` keeps claude STILL_FINDING. So an all-engines-clean batch may include a claude `NON_BLOCKING` verdict; its items are carried to the hand-back (interactive) or auto-formalized into committed IDEA files + batch-summary lines (sprint-auto), per the disposition mode-split. The proven-set fail-closed gate (`CLAUDE_VERDICT_SET_PROVEN`) still applies: an unprovable verdict set cannot read `CLEAN`, so claude stays non-clean (re-poll/re-trigger) until proven.
 
 ## Retrigger discipline — different per engine, fired in deterministic order
 

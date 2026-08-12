@@ -17,11 +17,28 @@ Probe `git -C <mind-vault-path> branch --show-current`.
 
 | Current branch | Action |
 | --- | --- |
-| `main` | Create `compound/YYYY-MM-DD-<slug>` off `origin/main`. Switch to it. |
+| `main` | `git fetch origin` first, then create `compound/YYYY-MM-DD-<slug>` off `origin/main`. Switch to it. |
 | `production`, `deployment` | Refuse. Protected branches. Ask the user to check out a feature branch first. |
-| Any other branch (feature / sprint / compound/...) | Stay on it. No new branch. No branch spam. |
+| Any other branch (feature / sprint / compound/...) **with an OPEN PR** | Stay on it. No new branch. No branch spam. |
+| Any other branch **with NO open PR** (merged, or closed unmerged) | **Stale — treat as `main`.** `git checkout main && git pull --ff-only`, then create `compound/YYYY-MM-DD-<slug>`. |
 
 The policy is deliberate: compound commits pile into the active sprint branch so a single PR accumulates all learnings from one sprint. Branch spam would split the review surface and make the "keep an open PR alive" contract awkward.
+
+**But "stay on the feature branch" is conditional on that PR still being open** — check it, don't assume:
+
+```bash
+gh pr list --head "$(git branch --show-current)" --state open --json number --jq 'length'
+```
+
+A checkout left on a branch whose PR merged weeks ago is the common resting state, not the exception: the merge happens on GitHub, and nothing moves the local HEAD back to `main`. Committing onto that branch is **worse than branch spam** on three counts:
+
+1. The work lands on a **dead ref** — no open PR, so nothing surfaces for review, and the human never sees it.
+2. The **self-mode CHANGELOG/manifest bump is computed against a stale base**, so the version it derives can collide or regress.
+3. It reads as success. The commit, the push and the "reported back" summary all look normal; only a later `gh pr list` reveals the learning went nowhere.
+
+The rule the failure teaches: **"reuse the existing branch" always means "reuse the existing *review surface*".** When the review surface is gone, the branch is just a name.
+
+The **single up-front `git fetch origin`** is deliberate too: the self-mode bump reads the topmost CHANGELOG version and the manifest from this base, so a stale `origin/main` ref (a checkout that hasn't fetched since the last release) computes a colliding version. One fetch before branching is the whole freshness protocol — a compound run takes minutes, so no push-time re-fetch/re-verify; if compound runs ever get slow enough for main to race ahead mid-run, that's a bigger problem than this protocol.
 
 ## The slug for compound branches
 
@@ -43,6 +60,24 @@ Write all target files for the routing decision. Common cases:
 - **Command:** new `commands/<verb>.md` following the shape of existing `commands/*.md` files.
 - **Script:** new `tools/<script>.sh` with `chmod +x`. Include a brief header comment.
 
+## Fact-check version-gated claims before emitting
+
+A live sprint yields claims of the form "X exists only in v≥N", "flag Y was added in Z", "format
+unchanged across A–B". These are the highest-error-rate content a compound promotes: the sprint
+observed ONE version under ONE config, and the natural failure is over-generalizing that observation
+into a version gate. Two consecutive compound PRs shipped confidently-wrong claims of exactly this
+shape (PR #217: a "v3.5+" gate on a v3.0 feature; a hook blamed for a permission-layer block).
+
+- **Verify against a primary source** — release notes, the changelog, the PR/commit that introduced
+  the feature — NOT version-pinned doc pages. Docs lag features: a field absent from the vN docs
+  page may have shipped in v(N−k) undocumented (Traefik `rejectStatusCode`: in core since v3.0 via
+  traefik#10130, absent from doc pages until late 3.x — the "v3.5+" misread came from the docs gap).
+- **Can't verify** (offline run, ambiguous sources)? **Demote the claim to an observation with
+  provenance** — "observed on v3.5; introduction version unverified" — never assert the gate.
+- **Attribute a block/denial to the right layer before documenting it.** A guard firing once has
+  several candidate sources (harness permission matcher, plugin hook, repo hook, server-side rule).
+  Reproduce against the specific component you're about to blame — if it has a self-test, run it.
+
 ## Self-mode CHANGELOG bump (mind-vault self-promotion only)
 
 When `/compound` writes to mind-vault **itself** (a self-promotion — not a project-local `docs/solutions/` write), maintain `CHANGELOG.md` in the SAME commit:
@@ -50,6 +85,9 @@ When `/compound` writes to mind-vault **itself** (a self-promotion — not a pro
 - **Pure `/compound` PRs increment the patch component by 1** (`vX.Y.Z → vX.Y.(Z+1)` — not a bump *to* `0.0.1`). Mind-vault's policy is per-PR versioning. A compound has no IDEA, so `/wrap` (whose Step 4b would handle the bump for an IDEA PR) never fires — `/compound` owns the bump. Take the topmost `## vMAJOR.MINOR.PATCH` header, increment PATCH, insert the new section above it.
 - **Section shape** (match existing entries' prose density): `## v<X.Y.Z> — <short title>`, a one-paragraph intro, then `### Added` / `### Changed` / etc. (Keep-a-Changelog keys), and a `(YYYY-MM-DD, [#N](https://github.com/infohata/mind-vault/pull/N))` tail.
 - **Bump the plugin-manifest mirror in lockstep.** mind-vault ships `.claude-plugin/plugin.json` whose `version` MUST mirror the top CHANGELOG `## vX.Y.Z` (IDEA-017). In the SAME commit, `jq` in-place `.version` to the new bare `X.Y.Z`. This is the mirror half of `/wrap` Step 4b's "N sync-required sources" contract — `/compound` owns the bump for IDEA-less PRs, so it owns the mirror too. Verify: `jq -r '.version' .claude-plugin/plugin.json` equals the new top CHANGELOG version.
+- **Pre-commit assertion (structural backstop — do not skip; both halves have been missed in the wild, each costing a follow-up fix PR):** two local checks, no network (the fetch already happened at branch time):
+  1. `git diff --staged CHANGELOG.md | grep '^+## v'` matches — the staged diff **adds a new section header**. Appending bullets into the released top section is the recurring miss.
+  2. `jq -r '.version' .claude-plugin/plugin.json` equals the new top CHANGELOG version.
 - **`## Unreleased` stays `_(none)_`** — a compound that is the shipping unit writes its `## v` section directly, not a parked Unreleased bullet.
 - **Post-merge:** `make release` cuts the tag from the topmost CHANGELOG header (see wrap SKILL.md Step 4b § Mechanics, `make release` sub-bullet).
 - **Remote/overnight note:** this is why the policy lives here, not in auto-memory — a compound run on the VPS (sprint-auto, overnight) must apply the same bump. Auto-memory doesn't sync across hosts; mind-vault does.
