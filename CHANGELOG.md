@@ -10,6 +10,492 @@ Category keys follow [Keep a Changelog](https://keepachangelog.com/): **Added**,
 
 _(none)_
 
+## v5.4.9 — shadow observes but does not protect; sweep the false-clean CLASS, not the instance
+
+From the live rung of the same staged rollout that produced v5.4.8, plus the review cycle over its evidence tooling ([PR link in commit trail]).
+
+### Added
+
+- **`skills/shell/references/EVIDENCE_SCRIPTS_AND_FALSE_CLEANS.md`** — read-only scripts whose entire product is a claim about the world ("nobody hit the fault"). They change nothing, so they feel low-risk; a maintenance script that fails loudly costs an afternoon, an evidence script that fails **quietly** produces a green light someone acts on. Covers: the check that reports success without having run; sweeping the **class** across discovery / filter / parse / aggregate / print rather than patching the instance (observed three times in one review cycle — each correct fix left the identical silhouette one layer up); **a zero is only trustworthy beside a positive count** ("0 of type X" next to "1055 detected" is a measurement; alone it is an assertion); naming the distinct reasons for an empty result; announcing partial coverage, since a missing section reads as a complete report; and deriving targets from the **config** rather than a directory, systemd-unit-name or default-path guess — the most expensive variant being a scan that read the wrong files entirely and returned a confident zero.
+
+### Changed
+
+- **`skills/deployment/references/DARK_DEPLOY_KILL_SWITCH.md`** — two sections qualifying the existing "dark and shadow are safe to enable everywhere at once", which is true about *enabling* and reads as a licence to *linger*. **Shadow observes; it does not protect**: when the safe path is gated on the live value specifically, every other mode — shadow included — takes the destructive `else`, so shadow's own log lines describe writes that **happened**, not writes prevented. Staging therefore has a running cost the shadow log already quantifies (N divergences/day × days staged), and "we're on shadow so nothing bad is happening" is exactly backwards. Plus: **the staging unit is the ORGANISATION, not the tenant** — splitting one customer's sites across two policies makes the same workflow behave differently at two of their locations and renders any incident report unanswerable without first asking which site.
+- **`skills/shell/references/SAFE_CONFIG_EDITS.md`** — flipping a key that may already exist: a `grep -q … ||` guarded append is **silently wrong on every run after the first**, including when the key exists with the wrong value, so gate on the **value** and refuse when the key matches ≠1 lines (a reader using `head -1` shows one value while `sed` rewrites all of them). Plus **stage → validate → `rename(2)`**: `sed -i` then validate leaves a window where the live file holds unvalidated content, and a kill in that gap ships it; edit a same-directory copy, validate the copy, then rename — atomic, and attribute-preserving because it is the same inode. With the three details that make it hold: a validator that **cannot run** is a failure not a pass, `trap` the staging copy (it carries whatever the config carries), and `flock` or a concurrent run's readback can make one operator's revert undo another's edit.
+- **`skills/review-loop/references/engine-claude.md`** — a **second refusal shape** beyond the documented skip-no-op: *"No new review performed — has already left multiple review comments on this PR"*, which is a refusal-with-a-reason rather than the terse skip, so a no-op list keyed on the known string misclassifies it as a substantive verdict. It survived four consecutive pushes across four head SHAs, all completing `success` with zero verdicts — the sharpest instance yet of a green check carrying strictly no review information. What got past it was not the documented `@claude review` override but a **question-shaped mention**: name the changed files, ask numbered concrete questions, and avoid the word "review".
+
+## v5.4.8 — the OFF position of a kill switch must be faithful per call site; a zero needs a positive control
+
+From a staged rollout of a matching-rule change against a third-party datastore ([PR link in commit trail]).
+
+### Added
+
+- **`skills/deployment/references/DARK_DEPLOY_KILL_SWITCH.md`** — the dark → shadow → live ladder and what each rung actually proves. Headline trap: when N call sites are collapsed behind one flag, **the flag's OFF position must reproduce EACH site's prior behaviour, not the most common one**. Three sites unified behind one helper had *two* different legacy rules; a single `legacy` path would have silently loosened one of them while presenting as "switch off, no behaviour change, tests green". Also: rollback stops future writes but cannot unwind past ones; never leave two hosts running different write policies against one datastore; and shadow-that-logs-only-disagreements makes silence ambiguous between "never ran", "ran and agreed" and "logging broken".
+
+### Changed
+
+- **`skills/shell/references/MAINTENANCE_SCRIPT_CONTRACT.md`** — five siblings to the existing fail-closed `--verify` section:
+  - **Test the operation, not its guard — break the TARGET, not the input.** Breaking the input trips an earlier precondition, so the stage under test never runs and the test passes vacuously. A restore-on-failure test was reported as passing without the restore ever executing.
+  - **Error paths obey the happy path's contract.** An installer that stages-lints-renames must not restore with a plain `cp` over the live file; plus copy-don't-move the backup, validate it before installing, and note that rollback restores the prior file *mode* too.
+  - **Verify the file you edited, never a glob.** A glob pulled in an unrelated file broken for five years; the `&&` short-circuited and the real verification never ran, while the edit had landed fine.
+  - **A zero is only evidence if the method can produce a non-zero.** Ship a positive control in the same output; if the control is also empty, the instrument is broken, not the traffic.
+  - **Prove a log line LANDS before letting the log inform a decision** — as the runtime user, on every host. A default log destination is a property of the host's config, not the language: one host recorded, another discarded, and the silence would have read as "no differences found". Includes the timezone caveat for cross-host correlation.
+- **`skills/compound/SKILL.md`** + **`references/mind-vault-promotion.md`** — "stay on the feature branch" now requires that branch to still have an **open PR**. A checkout left on a branch whose PR merged weeks ago is the common resting state; committing onto it is worse than branch spam — dead ref, stale base for the version bump, and it reads as success. Reuse the *review surface*, not the branch name.
+
+## v5.4.7 — deferrals need an expiry trigger, not just a successor ticket
+
+A deferral justified by a claim about the *surrounding context* ("acceptable while all callers are
+trusted") can never fire: the successor ticket waits on backlog priority while the condition that made
+the justification true has already lapsed. Observed in the wild — an authorization gap stayed deferred
+straight through the change that made it a real exposure, and surfaced only because a human asked
+whether anything was left.
+
+### Added
+
+- `skills/plan/references/DEFERRAL_EXPIRY_TRIGGERS.md` — write the **invalidating condition**, not just
+  the successor ticket, so the note argues against itself when the context moves. Carries the
+  inert-vs-self-invalidating contrast, the plan/review check ("what would make this justification
+  wrong?" — environment change ⇒ needs a trigger; someone-does-the-work ⇒ ordinary backlog item), and
+  the reviewer heuristic against **inheriting** a prior deferral's justification, since citing a stale
+  one launders it into the new plan.
+
+- `skills/ideate/references/divergent-scan.md` — **Axis 9, Expired deferrals**: the sweep that *catches*
+  an already-inert deferral, with grep recipes for context-justified language. Writing the condition only
+  helps the next deferral; the ones already in the archive need somebody to notice the trigger fired, and
+  that belongs at ideation — by plan time the work is already chosen.
+
+### Changed
+
+- `skills/plan/SKILL.md` — Scope Boundaries (step 4 of the plan structure) now points at the reference,
+  since out-of-scope is where deferrals are actually written; References list updated.
+- `skills/ideate/SKILL.md` — divergent-scan axis list gains Expired deferrals. Highest-yield axis on a
+  mature codebase: no other axis finds these, because a deferral reads as "covered" (it names the risk,
+  the successor and a reason) so every later scan skips it.
+- Catchment sweep — deferrals get written at almost every workflow stage, not just plan scope
+  boundaries, so every write-site now points at the reference: the plan template's out-of-scope
+  placeholder, `/idea` non-goals (Phase B substitution + References), `/work`'s archive-README punt
+  list (§ 6a), `/wrap`'s follow-up-flag disposition (Step 6), and `/review-loop`'s `NON_BLOCKING`
+  formalize path. The reference's "Where this applies" section lists the wired sites bidirectionally.
+
+## v5.4.6 — sweep integrity: an `--include` allow-list makes a completeness grep under-report
+
+Compounded 2026-07-27 from a dead-code removal in a consuming project. The change swept the repo to
+prove no live references to the deleted file remained, concluded "exactly five", and wrote that count
+into four documents. Two more lived in `.env.*.example` templates — which match no source-code glob,
+so the extension-filtered sweep never opened them. A review bot found what the sweep could not.
+([#226](https://github.com/infohata/mind-vault/pull/226))
+
+### Changed
+
+- `rules/RULE_self-sweep-before-push.md` — new **Sweep integrity** section: when a sweep's job is to
+  prove **absence or completeness** ("no references remain", "exactly N sites", "nothing else calls
+  this"), never filter by file extension. `grep -rn "PATTERN" --include='*.py' --include='*.md' .` answers
+  *"hits in the files I thought to look at"* and presents that as zero; config templates, dotfiles,
+  extensionless scripts, unexpectedly-named CI YAML and generated manifests are all invisible to it.
+  Exclude **directories** instead — a false positive from `vendor/` costs a glance, a false negative
+  ships. Notably, trigger 5's existing count-claim check **cannot** catch this class: the count does
+  match the listed set; the *set* is what's short. Generalised as **a negative result is a claim about
+  your search, not about the repo** — before asserting "none remain", ask what the search could not
+  see. Adds a matching "When This Applies" bullet for any commit whose message, PR body, or docs
+  assert absence or a count.
+
+## v5.4.5 — container `exec` umask inheritance; the recovery-recipe contract
+
+Compounded 2026-07-23 from a containerized-app staging rollout in a consuming project, where a
+recurring "unable to unlink … Permission denied" wall that had been treated symptomatically for three
+rounds turned out to have one cause: `docker exec` does not inherit the entrypoint's `umask`. The same
+rollout produced four consecutive review catches on a single dirty-tree guard — every one of them a
+recovery recipe that read correctly and could not run.
+([#224](https://github.com/infohata/mind-vault/pull/224))
+
+### Added
+
+- `skills/deployment/references/ROOTLESS_DOCKER.md` — new section: **`docker exec` does NOT inherit the
+  entrypoint's `umask`**. An entrypoint's `umask 002` covers the main process and everything it forks;
+  `docker compose exec` spawns a fresh process attached to the container's namespaces, not a child of
+  PID 1, so it starts at `022`. Build artifacts written by an exec-ed step land group-read-only, the
+  host deploy user cannot unlink them, and the next `git pull` dies mid-update leaving the tree
+  half-applied — surfacing as a git problem several steps from its cause. Includes the isolating tell
+  (the app's own writes are fine, only the exec-ed path is broken) and both fixes: `umask` at every
+  exec call site removes the cause, a default ACL is the backstop for writers you don't control
+  (setgid inherits the group but not group-write).
+- `skills/shell/references/MAINTENANCE_SCRIPT_CONTRACT.md` — new section: **a recovery recipe must be
+  RUNNABLE in the session that prints it**. A guard's whole value is its recipe, and its characteristic
+  failure is *plausible but unusable* — four shipped, reviewed instances catalogued (wrong identity:
+  a script that guards on being unprivileged then emits `sudo`; wrong state: `git restore` cannot clear
+  a staged addition; not-a-pathspec: splicing a rename's `old -> new` into a command; actively
+  destructive: offering `git restore` on an unresolved merge). Two preventive habits: classify before
+  advising and refuse when no single command fits (explicit "no recipe, here's why" beats a fabricated
+  one), and execute the recipe you emit against real state. Sub-section on parsing structured tool
+  output by documented **columns** rather than whitespace fields, plus not undoing it downstream via
+  unquoted expansion or double-quoting what the tool already quoted.
+- `skills/shell/references/MAINTENANCE_SCRIPT_CONTRACT.md` — new section: **a generated artifact on a
+  fixed path outlives the code that generated it**. The `--emit-setup` pattern (bake real values into a
+  self-contained script for an operator to run at higher privilege) has two failure modes that both
+  look like success: staleness (a snapshot applies everything *except* the step added since, exits 0,
+  prints a plausible summary) and foreign ownership (a shared `/tmp/<proj>` name already owned by
+  another account fails with a bare `Permission denied`). Fixes: stamp the source commit and warn at
+  run time on drift; default to a per-user path; pre-flight the target so the failure names the owner.
+  Plus the ordering trap — emitting from a checkout *before* the deploy that updates it bakes in old logic.
+- `skills/idea/assets/check-idea-frontmatter.py` — re-runnable guard for the YAML-octal id trap already
+  documented in the `idea` SKILL.md: verifies ids are quoted strings matching their filenames, checks
+  the `zfill(3)` **collision** (observed live in a consuming project, twice in one tree), and validates
+  the id lists and `superseded_by` that the documented migration `sed` deliberately does not touch.
+  Dogfood: mind-vault's own tree failed the guard with 45 problems, three of them live collisions —
+  migrated separately in [#225](https://github.com/infohata/mind-vault/pull/225).
+
+### Changed
+
+- `skills/idea/SKILL.md` — replaced the inline verification heredoc in the migration section with a
+  pointer to the new asset. The snippet only checked id/filename agreement; the asset also catches
+  collisions and unquoted list members. Re-framed as *run after every `/idea` capture*, not once at
+  migration — some `/idea` implementations still emit unquoted ids, so new files reintroduce it.
+
+## v5.4.4 — shell: interactive `sudo -i` login-shell `&&`-chaining trap
+
+Compounded 2026-07-21 while writing rootless-docker service-user deploy command blocks for a consuming project. `sudo -iu <user> && cmd` runs the trailing commands in the PRE-sudo session, not the target user's — `sudo -i` opens an interactive login shell that must exit first. Silently executes half a pasted block under the wrong identity. ([#223](https://github.com/infohata/mind-vault/pull/223))
+
+### Added
+
+- `skills/shell/references/INTERACTIVE_SUDO_LOGIN_SHELL.md` — the interactive sibling of `PRIVILEGE_DROP_PORTABILITY.md`: why `&&`/`;` after `sudo -iu` / `sudo -i` / `su -` binds in the caller's shell, and the two correct forms (become-user on its own line; or `sudo -iu <user> bash -lc '…'` with `-l` sourcing bash's login files — PATH, `XDG_RUNTIME_DIR`, rootless `DOCKER_HOST`). Pointer added to the `shell` SKILL.md References list.
+
+## v5.4.3 — deployment: render-and-deliver traps at a file-provider edge (mount inode-pin, empty-config abort, rate-limit threat model)
+
+Compounded 2026-07-17 from a central Traefik edge's route-onboarding sidecar — a service that programmatically renders a file-provider fragment and delivers it into the proxy container for hot-reload. Three distinct **silent estate-wide outages** in one render-and-deliver pipeline, none of which a bring-up smoke test catches: the writer wrote but the consumer never saw it, the writer emitted an "empty" config that took down *all* routing, and a mount-layout mistake shadowed the static routes. The unifying lesson: **a delivery mechanism that passes "does it load at startup?" can still be fundamentally broken for updates** — test the second write, not the first read. ([#222](https://github.com/infohata/mind-vault/pull/222))
+
+### Added
+
+- `skills/deployment/references/CONTAINER_SINGLE_FILE_MOUNT.md` — delivering ONE rendered file into a consumer container without silent staleness:
+  - **A single-file / `volume.subpath` mount is INODE-bound.** It binds the target's inode at container-create, so an atomic-rename writer (`write tmp; fsync; rename` — the default "safe write" idiom) points the *name* at a new inode while the container stays pinned to the original → the consumer serves the first-ever content forever, no error anywhere. Fix: in-place `O_TRUNC` write (same inode), or mount the parent directory (path-tracked).
+  - **A volume-at-a-directory SHADOWS the image's committed content — and copy-up happens once.** Mounting a volume at `/ctr/dir` hides everything the image committed there; a named volume copy-ups that content on FIRST use then freezes it, so rebuilt-image files never arrive — an estate-wide route drop/fossilisation from a mount-layout mistake. (Nested *explicit* binds DO compose — Docker sorts mounts by destination path.) Fix: overlay one file over a committed empty-but-parseable placeholder via a single-file/subpath mount, keeping the directory itself one canonical unlayered source.
+  - **Isolation-test the WRITE cycle, not just container startup.** Startup reads the inode once and passes; the bug is the *second* delivery. The test must drive the real writer's code path against a real consumer and assert the change propagates (+ `stat` the inode if relying on the in-place fix).
+
+### Changed
+
+- `skills/deployment/SKILL.md` — `metadata.version` `'2.1'` → `'2.2'` (skill touched: References entries updated/added).
+- `skills/deployment/references/TRAEFIK_EDGE_HARDENING.md` — two additions to the file-provider edge patterns:
+  - **§6 empty-config abort (new).** A programmatically-rendered dynamic fragment must emit a bare `{}` when its table is empty. `{"http":{"routers":{},"services":{}}}` is **rejected** (`routers cannot be a standalone element`) and aborts the **entire** dynamic-config build — every `@file` router estate-wide (infra, dotfile guard, TLS) vanishes at once. A renderer that serialises its empty typed struct produces exactly this poison the first time its store is empty. Guard `if len(entries)==0 { return "{}" }`; commit the render only after Traefik reflects it (poll `/api/http/routers`) and roll back otherwise.
+  - **§4 rate-limit threat model (extended).** A per-IP rate-limit caps only a *single runaway IP*; it is **not** distributed-DDoS defense (a botnet of N IPs each at ~1/s sails under any per-IP cap). So a tight value buys ~zero DDoS benefit and 429s legit asset-heavy pages — size `burst` to clear the heaviest single-page fan-out, lean generous, and treat volumetric attacks as an upstream/network-tier problem.
+
+## v5.4.2 — deployment: remote-sudo/forced-command traps + systemd sandbox version gates
+
+Compounded 2026-07-15 from br-docs IDEA-029 Phase 3 (an on-estate Loki backup: one box PULLs a snapshot from the bastion over a forced-command SSH key). Four bugs, and **every one of them lived in a path that only executes when something is unusual** — an error path, or a hardened-account path. A negative test on the *data* path passed and gave false confidence about the rest. That's the unifying theme: the code you exercise least is where these hide. ([#221](https://github.com/infohata/mind-vault/pull/221))
+
+### Added
+
+- `skills/deployment/references/SHELL_INSTALLERS.md` — **patterns 16–20**, extending the catalog to remote-sudo and forced-command territory (16–17 are language-general, so per the file's layering note their full text lives in `skills/shell/references/STRICT_MODE_HAZARDS.md` §10–11 with stubs in the installer catalog):
+  - **16. `rc=$?` after `if ! cmd` captures the NEGATED status** — always reports `rc=0`, so a real failure prints success and hides which end of a pipeline broke.
+  - **17. Reading `${PIPESTATUS[0]}` RESETS `PIPESTATUS`** — the assignment is itself a command, so the next `${PIPESTATUS[1]}` reads a 1-element array and, under `set -u`, **aborts**. Converts an error *report* into a *crash*, on the error path only. Snapshot the whole array: `st=("${PIPESTATUS[@]}")`.
+  - **18. `ssh -t` + command substitution = an invisible sudo prompt (silent hang)** — with `-t` the remote's stderr returns over the PTY and lands on ssh's local **stdout**, so `$( )` captures the `[sudo] password` prompt instead of showing it; `2>/dev/null` can't help because it was never on local stderr. Plus `use_pty`/`tty_tickets`: a new session is a new tty and needs a **fresh** password. Two fixes, preference-ordered (delete the prompt by staging; or `2>&1 | tee /dev/tty` to show *and* capture).
+  - **19. Forced-command keys: an explicit PTY request is FATAL; a command-less ssh only warns** — `restrict`/`no-pty` refuses with the opaque `PTY allocation request failed on channel 0`, but the session dies (exit 255, forced command never runs) only when the PTY was requested *explicitly* (`-t`/`-tt`/`RequestTTY=yes|force` — easy to inherit from an outer `ssh -t` wrapper); a bare `ssh user@host` with tty stdin just warns and runs the forced command tty-less. Use `-T` for both cases; mandatory when streaming binary (a PTY mangles it with CR/LF translation).
+  - **20. A `nologin` shell BREAKS SSH forced commands — it is not a security control.** sshd execs a forced command **through the login shell** (`$SHELL -c '<cmd>'`); `nologin` ignores `-c`, prints to **stdout** (not stderr), and exits 1. Symptoms all point away: ssh rc=1, remote stderr **empty**, the wrapper's own diagnostics absent, and the refusal text lands **inside the data stream** where `| gzip` compresses it.
+- `skills/shell/references/STRICT_MODE_HAZARDS.md` — hazards **10–11**: the full text of installer patterns 16–17 (negated-rc capture after `if !`, PIPESTATUS reset-on-read), hoisted to the base shell layer per the layering note so non-deployment scripts get them too.
+- `skills/deployment/references/HARDENING.md` — **"systemd unit sandboxing — gate on the CAPABILITY, never on a proxy for it"**:
+  - **`SystemCallFilter=@system-service` requires systemd >= 240**, and older systemd does **not reject** it — it silently resolves to a ~40-syscall allowlist with no `openat`/`read`/`mmap`/`socket`. `execve` is allowed, so the process starts and the **dynamic loader** is denied `openat` — with `SystemCallErrorNumber=EPERM` (typical in hardening drop-ins) the service dies with `status=127`; the default action kills with SIGSYS → `signal=SYS`. The 127 signature is maximally misleading: it's the loader, not systemd (whose own sandbox failures are 226/228/203); the binary runs fine by hand; the identical unit works on a newer box. Verify with `systemctl show <unit> -p SystemCallFilter` — a ~40-entry list means the set didn't resolve.
+  - Unknown **directives** degrade gracefully (warn + skip: `ProtectProc` 247, `ProtectClock` 245, `ProtectKernelLogs` 244, `RestrictSUIDSGID` 242); an unknown **set inside `SystemCallFilter`** does not.
+  - **Gate on the capability, not the box's flavour.** `systemd-detect-virt = kvm` is a *proxy* for "modern enough to sandbox", and proxies break: one estate spans systemd **229 → 257**. Evaluate the real precondition on the target, fail safe both ways, and make the un-gated path `rm -f` the drop-in so a re-deploy **repairs** a host rather than needing manual surgery.
+
+### Changed
+
+- `skills/deployment/SKILL.md` — `metadata.version` 2.0 → **2.1** (skill touched). `skills/deployment/VERSION` stays **2.0**: that file is the **stack** version (Docker Compose v2), mirroring `django`→5.5 and `laravel`→12 — not the skill's.
+
+### Fixed
+
+- `tools/find_claude_comments.sh` — **the @-mention task shape (`**Claude finished @user's task…**`) is now recognized as a full verdict surface**: `claude finished` (the action-generated stable header) added to `CLAUDE_BODY_SIGNATURES`. Dogfooded on this very PR: the `@claude review` retrigger answers via `claude.yml` in the task shape, whose body carried a real blocking finding **four cycles in a row** while the BOTH-AND summary filter dropped it (no "code review" phrase in the body → `CLAUDE_HEAD_VERDICTS=0` → UNPROVEN/SILENT; the coexisting auto-run "No issues found" summary false-CLEANed the two cycles it posted). Regression fixture `tests/fixtures/claude/task-shape-retrigger/` (clean summary + task-shape finding on one SHA must enumerate both); new calibration section in `skills/review-loop/references/engine-claude.md`.
+- `skills/deployment/references/HARDENING.md` — the capability-gate example itself carried an `A && B || C` trap (the finding above): a failed `install_dropin` both fired the destructive `|| rm -f` branch AND was masked (chain exits 0 under `set -e`). Now an explicit `if`/`else`, with the trap called out inline.
+
+### Security
+
+- **Never claim a security property you have not tested.** The `nologin` shell in pattern 20 was documented as one of four *controls* bounding a privileged (`docker-ops`) grant. It was not a control — it made the feature **inert** while *looking* correctly bounded, which is the failure mode you don't notice, because "no backups yet" is indistinguishable from "not scheduled yet". The real bounds were the forced command, `restrict`, a root-owned wrapper, and no password. Corollary from the same cycle: the `restrict`→`no-pty` control **proved itself** by refusing our own client (pattern 19) — the refusal was correct; the bug was ours.
+- **Check for prior art before writing a new remote-sudo helper.** Fix 2 in pattern 18 (`2>&1 | tee /dev/tty`) already existed in the source repo (br-docs `install-key.sh`); not looking cost a silent one-minute hang in front of the operator.
+
+## v5.4.1 — deployment: Loki/promtail pipeline traps + rootless dual-port wedge
+
+Compounded 2026-07-14 from a live estate log-aggregation bring-up (Loki + promtail for auth/SSH),
+where every item below shipped past config review AND a passing dry-run, and was caught only by
+querying live data.
+
+### Added
+
+- **`skills/deployment/references/MONITORING.md` — "Loki + promtail: four traps that make the pipeline
+  lie rather than fail."** (1) No `timestamp` stage ⇒ promtail stamps **ingestion** time, so a
+  first-run backfill replays days of history into one window — spurious burst alerts, worthless
+  timestamps, inert `reject_old_samples_max_age`, and a **historical security event replayed as a live
+  critical**. Includes a stage handling BOTH rsyslog formats (one estate ran both) with the `location`
+  that a year-less format silently needs. (2) promtail's `replace` substitutes **capture groups** —
+  `${1}` backrefs emit literal text, mangling the line while NOT redacting the secret. (3) An
+  over-matching redaction regex **blinds the alert rules** (rewrites `Accepted password for root` so
+  the root-login rule can't match) — a strictly worse trade than the leak; require the separator.
+  (4) LogQL `count by (x) (count_over_time(...))` counts **series** (incl. `__stream_shard__`), not
+  distinct label values — needs an inner `sum by (x, label)`. Plus: narrow-scrape journald on
+  `__journal__comm`, never the user-settable `__journal_syslog_identifier` (or `logger -t sshd` forges
+  criticals) — and the corollary that `logger`-based smoke tests then false-negative.
+- **`ROOTLESS_DOCKER.md` — publishing the same host port on two IPs WEDGES the daemon.** Deadlocks
+  rootlesskit's builtin port driver: container stuck in `Created` with no logs, `docker
+  logs`/`inspect`/`rm -f` on it hang while the rest of the daemon is fine, `compose up` blocks,
+  `slirp4netns` spins. Each publish alone works; the pair is fatal. Includes the 30-second busybox
+  repro and the fix (publish one IP).
+- **`ROOTLESS_DOCKER.md` — a rootless daemon restart can silently leave services DOWN.** Containers
+  exiting **non-zero** on SIGTERM are NOT restarted despite `restart: unless-stopped` (observed:
+  Prometheus/Grafana returned, Alertmanager/blackbox did not — alerting died while dashboards looked
+  healthy). Always `docker ps -a` after a restart; prefer `docker start` over `compose up`.
+
+## v5.4.0 — idea: quote frontmatter ids (`id: "035"`) — the silent YAML-1.1 octal misparse
+
+Compounded 2026-07-14 from an estate-monitoring project where an agent built an idea-status table and
+IDEA-035 silently overwrote IDEA-029 — the second time the same bug surfaced in one session.
+
+### Fixed
+
+- **`skills/idea/assets/idea-template.md` now quotes `id:` and `title:`.** A bare zero-padded id is
+  **YAML-1.1 octal**: `id: 035` parses to the integer **29**, with no error. `/idea`'s own
+  zero-pad-to-3-digits rule is what triggers it. `035` comes back as IDEA-029's number, so the two
+  collide as soon as tooling normalises ids — one silently overwrites the other. `title:` is quoted
+  for a second, same-root-cause bug: an inner
+  colon (`(pilot: client.example.com)`) raises `ScannerError` and kills the *entire* frontmatter block.
+- **`skills/idea/SKILL.md` §4** documents the failure mode, the reason it survives, and a **verified
+  migration** for existing projects (both `id: 017` and legacy `id: IDEA-017` forms → `id: "017"`,
+  idempotent, plus a detector for colon-bearing unquoted titles). Also: **read ids from the FILENAME,
+  not the frontmatter** — it is octal-immune and survives an unparseable block.
+- **`superseded_by:` quoted everywhere the skill models it** — the status-transition table, the
+  template comment, and the reference docs (`IDEAS_LOCATION_STATUS.md`, `update-semantics.md`) now all
+  show quoted ids, so no instruction in the skill surface re-teaches the bare form it just killed.
+
+### Why it hid for so long
+
+It is a **sub-100 problem**. Of ids `001`–`099`: **56** (`010`–`077`, digits all `0`–`7`) get a **wrong
+value**; `001`–`007` become int `1`–`7` (value right, type wrong); the **36** containing an `8` or `9`
+stay strings and are right **by luck**; `100`+ has no leading zero and is safe — so the bug ages out
+before a project is old enough to notice. The collision needs one more step: raw, `035`→`29` (int) and
+`029`→`'029'` (str) differ — but `str(29).zfill(3)` == `'029'`, so any normalising reader collides them.
+And **nothing in the workflow parses idea frontmatter** (`/idea` writes it, humans read it), so YAML
+never gets a chance to raise. It surfaces only when someone writes tooling — and then as *silently
+wrong data*, not an error.
+
+Migration verified against a 37-idea project: 34/37 ids misparsed before, 36/37 correct after, with the
+remaining one correctly flagged by the title-colon detector for a hand-fix.
+
+## v5.3.10 — deployment: rootless docker-ops ACL mask + operator-vs-service-account + host-write subuid ownership
+
+Compounded 2026-07-13 from a rootless-Docker monitoring-stack adaptation on a stripped-OpenVZ bastion (a `stack.sh` that wrapped the now-masked rootful daemon), via [#218](https://github.com/infohata/mind-vault/pull/218).
+
+### Added
+- `skills/deployment/references/ROOTLESS_DOCKER_OPENVZ.md` — **the socket ACL survives reboots but the
+  parent-*directory* ACL's mask doesn't.** The `0700` runtime dir gets `chmod`'d by the daemon *after*
+  `ExecStartPost setfacl`, which rewrites the POSIX mask to `---` → the `docker-ops` entry reads
+  `#effective:---` → daemon unreachable to the whole group after every restart (looks like a dropped
+  grant; it's a masked one). Fix: the dir `ExecStartPost` must wait-for-socket and set `m::` explicitly
+  (`setfacl -m g:docker-ops:rx -m m::rx`); one-shot live repair is the same setfacl. Checklist tightened.
+- `skills/deployment/references/ROOTLESS_DOCKER.md` — two rootless-identity traps. (1) **Operator-owned
+  config ↔ `sudo -u docker` don't mix**: the service account can't traverse the operator's `0700`/`0750`
+  home to read the compose file/`.env` (`stat …/.env: permission denied`) → pick run-as-service-account
+  (config under `~docker/`) OR operator-as-self (compose via the socket ACL), and `sudo rsync` to seed a
+  service-account-owned mount root. (2) **Host-written, container-read files need the container SUBUID,
+  not the in-image uid**: the userns remap makes a host-`65534` `0600` secret "other" to a container
+  running in-image `65534` (host `subuid_base+65533`) → perm-denied config-load crash; own it as the
+  subuid and preserve that across re-renders.
+
+## v5.3.9 — laravel: composer build-PHP ≠ runtime-PHP platform pin
+
+Compounded 2026-07-09 from a containerized-Laravel deploy that fataled on first request with a
+`platform_check.php` gate, via [#218](https://github.com/infohata/mind-vault/pull/218).
+
+### Added
+- `skills/laravel/references/CONTAINER_BUILD_PLATFORM.md` — the `composer:N` build image tracks the latest
+  PHP, so a lockless `composer update` resolves deps against a PHP newer than the `php:X-fpm` runtime and
+  bakes a `platform_check.php` gate that fatals on first request. Fix: pin `config.platform.php` in the
+  **build stage only** (not the repo-wide `composer.json`, which would break other-PHP consumers) and use
+  `--ignore-platform-req='ext-*'` so `php` stays enforced while only the runtime-installed extensions the
+  composer image lacks are ignored. References-list pointer added to `skills/laravel/SKILL.md`.
+
+## v5.3.8 — deployment+shell: Traefik v3 edge hardening + rootless source-IP masquerade + remote black-box verify
+
+Compounded 2026-07-06 from a public Traefik-v3-on-rootless-Docker edge sprint (dotfile-deny + rate-limit + a version bump); amended 2026-07-07 with the apply/wrap-phase traps ([#217](https://github.com/infohata/mind-vault/pull/217)).
+
+### Added
+- **`skills/deployment/references/TRAEFIK_EDGE_HARDENING.md`** (new) — native dotfile-**404** at a
+  Traefik v3 edge with no plugin/container (high-priority catch-all router + `ipAllowList` sentinel
+  range + `rejectStatusCode`, short-circuiting before a fail-closed dummy-server `noop`); the
+  **`.well-known`/ACME-renewal carve-out** (RE2 no-lookahead → `&& !PathPrefix`; blocking
+  `/.well-known/acme-challenge/` kills HTTP-01 renewal → cert expires → edge down); per-router
+  rate-limit hygiene; and the **version-bump audit drill** (latest-minor-only support, `acme.json`
+  format unchanged v3.4–v3.7 → cert reused, `%2E` pre-routing normalization, cert-reused-first gate +
+  reviewed rollback); plus the **outbound-egress canary** for cert renewal (the carve-out guards only
+  the inbound challenge path; renewal also needs outbound reach to the CA — probe it after any
+  host-network change). Pointer added to the deployment SKILL References list.
+
+### Changed
+- **`skills/deployment/references/ROOTLESS_DOCKER.md`** — rootless Docker's default port driver
+  **masquerades the client source IP** to the bridge gateway (per-IP rate-limit collapses to global;
+  logs/geo/allowlists blind) → `slirp4netns` port driver / `pasta` network driver; the **blast-radius
+  rule** (a net-stack env change reaches only *user-manager*-mode hosts, not *system-unit*/OpenVZ ones —
+  enumerate modes before claiming coverage); and **verify BOTH directions** — a net-stack swap can
+  silently kill *outbound* egress, and since ACME renewal is outbound + deferred to ~30d pre-expiry,
+  broken egress passes every inbound smoke test then expires the cert weeks later → gate on an active
+  in-container egress probe, and read source IP from an external host (hairpin masks it). Plus driving
+  `systemctl --user` for the service account **from root** via `su` (not `--machine`, whose
+  `journalctl` needs machined).
+- **`skills/shell/references/MAINTENANCE_SCRIPT_CONTRACT.md`** — remote black-box `--verify` must
+  assert the **positive** code (`= 200`), so `curl … || true` → `000` on an unreachable target fails
+  **closed** (a negated `!= 404` false-passes while the service is down); rate-limit load-tests need
+  **concurrency**; `openssl x509 -dates`/`-startdate`, not the nonexistent `-notBefore`.
+- **`skills/deployment/references/CICD.md`** — `gh pr edit --title/--body` aborts on Projects-classic
+  (GraphQL `projectCards`) → patch via `gh api … -X PATCH` (REST).
+- **`rules/RULE_git-safety.md`** — documented the **`main` over-match** that *string-level* guards
+  (permission-layer patterns, outdated naive hooks — NOT the shipped per-segment hook, which allows
+  the chain) hit on compound commands (`git push <feature> && gh pr create --base main …`) → split
+  the push and the pr-create into separate invocations (not a break-glass case); and the **stacked-PR
+  retarget race** — merging a dependent PR seconds after its base can merge it into the obsolete base
+  branch, stranding the work off `main` (the auto-retarget fires on head-branch **deletion**, not the
+  merge; diagnose with `baseRefName` + `merge-base --is-ancestor` on the **merge commit** — a squash-
+  merged tip false-alarms; recover by cherry-picking onto a fresh main-based branch; avoid by
+  confirming the retarget or `gh pr edit --base main` before merging the dependent PR).
+- **`skills/compound/`** — fact-check discipline for version-gated claims: verify "added in vN" /
+  "absent until vN" assertions against release notes or the introducing PR (never version-pinned doc
+  pages), demote unverifiable gates to observations-with-provenance, and attribute an observed
+  block/denial to the right guard layer before documenting it. Stub in SKILL step 3 + full section in
+  `references/mind-vault-promotion.md` (born from this PR's own review sweep, which caught both
+  failure shapes).
+
+## v5.3.7 — deployment+shell: git-pull deploy cutover + rootless-sudoers + privilege-drop portability + compound self-bump backstop
+
+Compounded 2026-07-05 from an edge deploy-productionization session (git-pull-as-service-account cutover onto a rootless-Docker box); single-PR section, provenance in the PR.
+
+### Added
+
+- **`skills/shell/references/PRIVILEGE_DROP_PORTABILITY.md`** — an unqualified `runuser` in a setup script dies `command not found` on Debian in non-root / non-login contexts — a **PATH trap, not packaging**: Debian ships it in `/usr/sbin` (off the default PATH exactly in the automated contexts setup scripts run in), while `setpriv`/`su` are `/usr/bin`-homed and reachable everywhere (confirmed on Debian 13 + 12 hosts). Prefer `setpriv --reuid … --regid … --init-groups -- env HOME=… <cmd>` (argv passed directly → no quoting fragility; inherits the caller's env untouched, so override `HOME`) or `su -s /bin/bash <user> -c '…'` (shell-string; mind nested quoting + the "prompts for the target's password when run non-root" trap) — or absolute-path `/usr/sbin/runuser` — and add the chosen tool to the dep preflight. Pointer added to the shell SKILL.md References.
+
+### Changed
+
+- **`skills/deployment/references/GITHUB_APP_DEPLOY_CREDENTIALS.md`** — two more Gotchas: (5) the stateless helper **`. source`s** its env file, so `DEPLOY_TOKEN_PERMISSIONS` **MUST be single-quoted** (`'{"contents":"read"}'`) — unquoted, the shell strips the inner quotes → POST body `{"permissions":{contents:read}}` → GitHub **HTTP 400** "token mint failed" (not 401/403, so it doesn't read as auth); (6) wire the helper **host-level** (`credential.https://github.com.helper`), not path-qualified + `useHttpPath` — a clone URL's `.git` suffix defeats the path match, git skips the helper and dies `could not read Username` (a path-qualified key on a multi-repo host must include `.git`).
+- **`skills/deployment/references/ROOTLESS_DOCKER.md`** — new "scoped-sudoers operator model" section: `sudo -u <svc> systemctl --user` needs **`SETENV:`** on the grant or sudo's `env_reset` refuses the required `XDG_RUNTIME_DIR` (scoped to the systemctl grant, `docker` listed first so the tag doesn't carry); and first-time setup *as* the service account needs **break-glass root** (the scoped grant permits `(svc) docker` + `(svc) systemctl --user`, not `git`/a login shell), while routine ops stay scoped-sudo.
+- **`skills/deployment/references/CICD.md`** — an idempotent-setup-script-over-multi-context-runbook section (self-test the credential *before* relying on it; handle re-runs; safe `base64` transfer) and a durable-checkout **cutover** section (reconcile the running stack's compose project name or a parallel `up -d` collides on published ports; reuse a literal-named state volume so a TLS cert is reused, not re-issued; verify green before teardown); plus anti-patterns for multi-privilege-context runbooks and destructive cleanup before verification.
+- **`skills/compound/SKILL.md` + `references/mind-vault-promotion.md`** — self-mode bump hardening, prompted by this PR's own review sweep: the branch step now does a **single `git fetch origin` before branching off `origin/main`** (the whole freshness protocol — a stale local ref is how colliding versions get computed; compound runs are minutes, so no push-time re-fetch ceremony), and the bump step gains a **mechanical pre-commit assertion** — the staged CHANGELOG diff must ADD a new `## v` header (bullets appended into the released top section are the recurring miss) and `jq -r '.version' .claude-plugin/plugin.json` must equal the new top CHANGELOG version. Both halves were missed in the wild (PR #214 → fix PR #215; PR #216 pre-sweep) — a prose instruction alone did not hold.
+
+## v5.3.6 — git-safety structural enforcement + rootless-Docker-on-OpenVZ + review-loop zero-row guard
+
+Compounded from a cross-project infra program (deploy-credential + rootless-Docker + cert-monitoring work across an estate of OpenVZ boxes).
+
+### Added
+
+- **`hooks/block-protected-branch-writes.py` + `hooks/hooks.json`** — a `PreToolUse(Bash)` hook that **structurally enforces** `RULE_git-safety` § "never merge/push into a protected branch": it *denies* `gh pr merge`, `gh api` merge/protected-ref *writes* (read-only probes of the same endpoints pass), and direct/force/bare pushes to `main`/`master`/`production`/`deployment` at the tool layer, while letting feature-branch pushes, forward-sync merges, and `gh pr create` through. Matching is shell-aware — shlex tokenization, per-command evaluation across `&&`/`;`/pipe chains, heredoc-body stripping — so `git -C <path> push`, quoted refspecs, and `sudo`/env-prefixed forms are caught while commit messages *quoting* the forbidden commands are not; a bare `git push` on a protected checkout is caught via a cwd branch probe. Break-glass is `GIT_SAFETY_ALLOW=1` prepended (the agent must not self-add it). Fails **open** on any internal error. Ships wired into the plugin's `hooks.json` alongside the SessionStart rule-loader, so every rule consumer gets the enforcement, plus an 86-case deny/allow self-test battery (`hooks/test-block-protected-branch-writes.py`). Provenance: an agent merged to protected `main` with `RULE_git-safety` loaded and quoted — the behavioural rule was necessary but not self-enforcing.
+- **`skills/deployment/references/ROOTLESS_DOCKER_OPENVZ.md`** — getting rootless Docker to *run at all* on a stripped cgroup-v1-only OpenVZ VPS (no per-user systemd, no cgroup delegation, no FUSE, no persistent `/dev/net/tun`): the root-owned `docker-rootless.service` system-unit recipe replacing `systemctl --user`, plus five compensations each tied to one reproducible error (static `crun` ≥1.14.3 + `--cgroup-manager=disabled` wrapper; a `dockerd-cgroupless` wrapper stacking an empty tmpfs over `/sys/fs/cgroup` in the rootlesskit ns; `vfs` storage; `/dev/net/tun` tmpfiles; socket-ACL usability layer). Gate on a per-box symptom probe, not `uname`. Cross-linked from `ROOTLESS_DOCKER.md` (the socket-resolution trap, a separate problem) + pointer in the deployment SKILL.md References.
+
+### Changed
+
+- **`rules/RULE_git-safety.md` + `docs/rules/RULE_git-safety-rationale.md`** — rule body gains a tight "being asked is not authorization" clause + a "Structural enforcement" pointer to the new hook; the rationale doc gains **"Behavioural rules need a structural backstop for irreversible ops"** — the generalisable lesson (any rule guarding a merge-to-protected / force-push / `rm -rf` / destructive-migration wants a tool-layer deny, not just context) and the backstop's design constraints (deny the narrow catastrophic set, allow adjacent; fail open; a deliberate grep-able break-glass; ship enforcement with the rule).
+- **`skills/review-loop/references/common-review-findings.md`** — catalogue entry #23: **atomic-write generator overwrites live output with an EMPTY result on an upstream-read regression**. The `write-tmp-then-mv` idiom silently publishes *nothing* when the source read yields 0 rows (format shift, regex miss, transient empty) — the atomic `mv` makes it worse (clean swap to empty, no partial-file signal, and the alert that would fire is defined over the now-absent series). Fix: fail closed on `[ "$n" -gt 0 ]` before the `mv`, keep last-good, exit non-zero; **sweep every atomic-write sibling** (the defect travels in sibling generators).
+- **`skills/deployment/references/GITHUB_APP_DEPLOY_CREDENTIALS.md`** — new subsection "Granularity across a fleet": one read-only Deploy App **per repo** (not one estate-wide App — a shared key clones the whole fleet); run the deploy as the repo's **existing** deploy account (`sudo -u <existing-account>` — swap the auth mechanism without moving filesystem/runtime identity); **per-developer** install when the actor is a workstation not a server.
+
+## v5.3.5 — review-loop + django/django-frontend: App-DRIVEN loop + KaTeX/markdown render traps
+
+Compound from a frontend dependency sweep + a math-rendering feature shipped while the agent session authenticated as a **GitHub-App bot actor**. Follow-on to v5.3.4 (which covered the deploy-credential + bot-*opened*-PR-being-reviewed half): this is the half where the App **drives** its own review loop, plus reusable Django static/markdown rendering traps and the vendored-static Dependabot variant (npm-ecosystem manifest + re-vendor CI).
+
+### Added
+
+- **`skills/review-loop/references/GITHUB_APP_DRIVEN_LOOP.md`** — running the loop as a `<your-app>[bot]` actor (not a human `gh auth`). The `@claude` retrigger silently drops because a bot comment is `author_association=NONE` → fix the `claude.yml` job `if:` with an **exact-login OR-clause** + `allowed_bots` on the action (both default-branch-only); a chicken-and-egg note (the amendment's own PR still needs one human retrigger). Plus: dependabot slash-commands (`@dependabot recreate/rebase`) are **human-push-access-only** (App rejected); the `gh` **App-token mint shim** (`ensure_gh_auth`) for agent hosts where gh is unauth but `git push` works; and the App-token **CI-read scope gap** (`checks:read`/`actions:read` 403 → read PR comments, not check-runs). Pointers from review-loop SKILL.md + dependabot-triage SKILL.md.
+- **`skills/django-frontend/references/CLIENT_MARKDOWN_RENDERING.md`** — two browser-side LLM/markdown traps: (1) the pre-markdown tag-stripper must be **tag-shaped** (`/<\/?[a-zA-Z!][^>]*>/g`) not "any `<…>`" (`/<[^>]*>/g`) or it eats prose arrows + comparison operators (XSS still stripped); (2) the model emits **fully-resolved URLs**, not your link pseudo-scheme, so a reroute must reverse-match resolved same-origin URLs as a superset of the scheme parser (persisted history re-renders client-side → one hook covers live + history). Pointer from django-frontend SKILL.md.
+- **`skills/dependabot-triage/references/VENDORED_STATIC_REVENDOR.md`** — the vendored-browser-asset Dependabot variant (synthetic npm-ecosystem manifest pinning files committed in `static/` + a re-vendor CI workflow that commits refreshed bytes onto the PR branch). Why these PRs stick at `mergeable_state: "unstable"` with no re-vendor commit (the CI commits only if `npm install` + copy + integrity all pass → a **stale map `src` for a new major's dist layout** kills the job silently); major-bump dist-layout traps (a lib dropping its root min build → vendor `lib/*.umd.js`; an icon/font lib consolidating compat into the woff2-only `all.min.css` → src must be the all-in-one, not the `@font-face`-less core); the committed file may be a **hand-concatenation** the 1:1-copy model can't reproduce (latent map-vs-reality drift); **local re-vendor reproduction** (`node:20-alpine` + `--network host` + `--ignore-scripts`, stage only the bumped dep's files per commit); and **consolidation-as-unblock** (fold the stuck PRs into one agent-authored branch — produces the re-vendor commits CI couldn't, fixes the map srcs, and escapes both bot-actor gates at once). Pointer + trigger keywords from dependabot-triage SKILL.md.
+
+### Changed
+
+- **`skills/django/references/MANIFEST_STATIC_FILES_STORAGE.md`** — new section: vendoring a CSS that references fonts must vendor **every format the `@font-face` `src` names**, because `collectstatic` rewrites each `url()` and **hard-fails on a missing target** (not a warning). A woff2-only subset (fine when the lib's own CSS is woff2-only, e.g. FA7) breaks the build for a lib whose stock CSS lists woff/ttf too (e.g. KaTeX); editing the vendored CSS breaks faithful-re-vendor `--check`. Verify with a `DEBUG=False` `collectstatic`.
+- **`skills/django-frontend/references/PREVIEW_DRAWER_URL_STACK.md`** — new section: a third-party render hook (math/diagram/highlight) renders inside the preview drawer **for free** by riding the drawer's dispatched `htmx:afterSettle` (`detail.elt = host`) — bind the helper to the htmx lifecycle scoped to `detail.elt`, no preview-specific call site.
+- **`skills/dependabot-triage/SKILL.md`** — anti-pattern added: don't drive `@dependabot recreate/rebase` from a bot/App (rejected, human-push-access-only); recreate after the conflicting base PRs merge, issued by a human. Also: vendored-static variant callout + description trigger keywords + `Composes with` pointer to the new `references/VENDORED_STATIC_REVENDOR.md`.
+- **`.github/workflows/claude.yml` + `claude-code-review.yml`** — mind-vault now dogfoods the App-driven review loop the new `GITHUB_APP_DRIVEN_LOOP.md` documents: admit `teisutis-agent[bot]` via `allowed_bots` on the review action + an exact-login OR-clause in the interactive `@claude` `if:` gate (scoped to the one App, not `'*'`). Without it a bot-opened PR on this repo ships UN-REVIEWED (the action's non-human-actor guard fails the run). Must reach the default branch to take effect.
+
+## v5.3.4 — deployment + review-loop: GitHub App deploy/automation credentials
+
+Compound from a read-only GitHub App deploy-credential pilot that replaced a personal SSH key standing on a production server, expanded mid-flight into a two-App program (a read-only deploy box + a write-capable automation host). The reusable patterns: the security invariant behind needing two Apps, the on-box token-mint helper shape, the unprivileged deploy-user wiring, and the CI-config gotchas that bit during the rollout.
+
+### Added
+
+- **`skills/deployment/references/GITHUB_APP_DEPLOY_CREDENTIALS.md`** — replace personal SSH keys / PATs on servers with **short-lived GitHub App installation tokens minted on-box** (stateless git credential helper; openssl RS256 JWT → `/app/installations/<id>/access_tokens`, no `jq`/`gh`, no token at rest; per-mint scope env can only down-scope). The **two-Apps-not-one invariant** — an App's permission set is the *ceiling for any holder of its private key*, so per-mint down-scoping is hygiene not a boundary, and a read-only deploy box + a write automation host must be **separate Apps**. Deploy (read-only) vs automation (write + gh-less PR via the installation token) cases; the **unprivileged deploy-user wiring** (`$HOME`-relative paths need the `!`-shell helper form so `$HOME` expands; `credential.useHttpPath` host-vs-path silent no-op); mint hardening (numeric-id validation, `--max-time`/`--connect-timeout`). Pointer added to the deployment SKILL.md References.
+
+### Changed
+
+- **`skills/review-loop/references/engine-claude-onboarding.md`** — new **`allowed_bots`** section: `claude-code-action` aborts the review on a **bot-opened PR** ("non-human actor") unless the bot is allow-listed via `allowed_bots: '<app-slug>[bot]'` on the **default branch** (the action reads the workflow from the default branch, not the PR copy); scope to the specific bot, not `'*'`, so dependabot/renovate don't burn metered Actions minutes. The review-side half of an App-opens-PR automation loop actually getting reviewed; distinct from the `@claude` author-association gate (which *blocks* untrusted bot triggers).
+- **`skills/review-loop/references/engine-claude.md`** — Silent-run failure-mode row gains a confirming anchor: a *first* un-draft/initial auto-run can come back SILENT (#1087) and a single explicit `claude_retrigger.sh` then produces a full verdict — the retrigger recovery works on the first review too, not only after a fix push (its first response may be the in-progress checklist, so wait for a substantive verdict before judging).
+
+## v5.3.3 — shell + deployment: live-host nginx/TLS maintenance patterns
+
+Compound from a live apex-redirect + Let's Encrypt rollout on a busy reverse proxy (2026-06-19). General live-host-ops machinery split into the shell maintenance-script contract; nginx/TLS specifics into a new deployment reference (the DRY-RUN/`--apply`/`--verify` machinery is good practice independent of nginx, so it lives in the language layer, not the domain one).
+
+### Added
+
+- **`skills/deployment/references/NGINX_TLS_REDIRECT_AND_CERTS.md`** — redirect vhost + Let's Encrypt on a proxy with many vhosts: the apex is often served by `default_server`/first-`ssl` *fallthrough* (so the change is **additive**, not replace — a new explicit `server_name` block wins `:80` by name and `:443` by SNI, nothing disabled); two-phase `:80`→issue→append-`:443` (a `:443` block can't reference a cert that isn't issued yet); the ACME-challenge `location` must stay a more-specific prefix than the `301` redirect (nginx picks longest-prefix, not file order) as a **standing** renewal precondition; the served mismatched/expired default cert is not yours. Pointer added to the deployment SKILL.md References.
+
+### Changed
+
+- **`skills/shell/references/MAINTENANCE_SCRIPT_CONTRACT.md`** — four general additions: (1) `--verify` **polls** the served effect after a graceful reload / eventual-consistency lag rather than one-shotting (old workers drain on the previous state → false negative on busy hosts); (2) keep the **full** stream in the evidence log but filter *named known-benign* per-item warning floods off the operator terminal (`tee … | grep -vE "$NOISE"`), never a blanket `2>/dev/null`; (3) **locate by exact token, refuse on ambiguity** — a `\bname\b` regex false-matches `sub.name` (punctuation is a word boundary), and a shared target gets a fail-safe stop, not a guess; (4) **detect the mechanism, don't hardcode one variant** — the same capability ships under different unit/tool names (renewer: `certbot.timer` vs `snap.certbot.renew.timer` vs `cron.d/certbot`; firewall: ufw/firewalld/nftables), so a check keyed on one name false-fails the others.
+
+## v5.3.2 — shell: root-via-sudo git "dubious ownership" trap + denial-vs-ENOENT path caveat
+
+Patch release (2026-06-18, compound, [#210](https://github.com/infohata/mind-vault/pull/210)). Extends `skills/shell/references/SUDOERS_WHITELIST_FENCES.md` from field experience building a read-only audit probe that shells `git`/`find` as root through the sudoers fence. Sequences after v5.3.1 ([#209](https://github.com/infohata/mind-vault/pull/209)) — no substantive-file overlap (only the shared CHANGELOG anchor, resolved on rebase).
+
+### Added
+- **Trap 4 — a whitelisted `sudo -n git …` that matches and runs can still abort rc=128.** Run as root on a non-root-owned repo, `git ≥ 2.35.2` refuses with "detected dubious ownership" (CVE-2022-24765) — so a root probe fails on exactly the hosts whose deploy checkouts aren't root-owned, while root-owned repos elsewhere succeed (a maddening per-host split). Remedy: declare `-c safe.directory='*'` in the whitelisted command, safe **only** for pure reads that execute no repo-controlled code (no hook / fsmonitor / pager / alias; never `config --list`). A silently-failed `status` otherwise false-reads a dirty tree as **clean** — the Trap-3 disaster in a new disguise.
+
+### Changed
+- Trap 3 forensic shortcut: the "uniform stderr length ⇒ denial" heuristic **inverts** for tools whose fatal embeds the target path (git names the repo) — stderr length varies with path even on failure, looking like the ENOENT case it isn't. Fall back to rc + message (rc=128 fatal ≠ rc=1 sudo denial ≠ rc=127 missing-binary).
+- Trap 2 caveat: a backslash carries no globbing risk, but it is the sudoers **escape character** (`sudoers(5)`), so `visudo -cf` parses `\n` / `\.` silently as an escaped letter and the command then fails to **match** at runtime — the same silent mis-match as `*?[]`, not a loud parse error. Remedy unchanged: keep declared arguments to plain-word patterns.
+
+## v5.3.1 — RULE_cross-idea-amendments: review-engine carve-out for IDEA-attribution comments
+
+2026-06-17. Single-PR section.
+
+### Changed
+
+- **`RULE_cross-idea-amendments` step 2 gains a review-engine carve-out.** The `IDEA-NNN` attribution prefixes the rule mandates on amended-file inline comments get flagged by review engines (Claude Code Review, Bugbot) running a generic "no unnecessary comments" instinct — a non-convergent cosmetic nit that survives every review-loop fix cycle. The rule now tells projects to pre-empt it by **documenting the carve-out in their `CLAUDE.md`/`AGENTS.md`** so the engine reads it as context, and to **never strip the prefixes** (that breaks the greppable amendment trail the rule exists to preserve) — the `COSMETIC_NONCONVERGENCE` hard-stop applies.
+
+## v5.3 — review-loop: claude verdict by model-judge, not regex
+
+Minor release ([IDEA-022](docs/archive/2026-06-idea-022-claude-findings-heuristic/IDEA-022-claude-findings-heuristic-false-positive.md), [#208](https://github.com/infohata/mind-vault/pull/208)). The claude review engine's verdict classification moves from a prose **regex classifier** to an orchestrator-inline **model-judge** emitting `{CLEAN | BLOCKING | NON_BLOCKING[]}`. Regex can't classify model-generated prose — it false-FINDING'd a clean "all resolved" recap (a convergence-blocker, surfaced in the IDEA-021 dogfood on PR #207) and false-CLEAN'd a marker-less prose finding (the architect hole); same root failure in both directions. `find_claude_comments.sh` is reduced to surfacing review material; the `/review-loop` judge classifies. The carve-out is typed to *prose-only verdict surface* (claude has no structured surface — its verdict IS prose), not the engine name — structured-surface engines (bugbot/copilot) keep the structural "clean, never prose" rule untouched, and a future prose-only engine inherits the judge path. Architect-reviewed ×2. Also folds the IDEA-021 Monitor-robustness compound (this PR's branch). The verdict judge ships unproven against live prose — its first real exercise is the `/review-loop` over this very PR.
+
+### Changed
+- `tools/find_claude_comments.sh` — reduced from prose REGEX CLASSIFIER to MATERIAL-SURFACER. Removed `CLAUDE_CLEAN_PATTERNS` / `CLAUDE_FINDING_MARKERS` / `is_clean` / `CLAUDE_HAS_FINDINGS` / the masking-suppression branches / `CLAUDE_CLEAN_SIGNAL` / the green clean banner. Kept (named) STATUS aggregation across head-SHA runs, the in-window verdict enumeration (now **raw + verbatim bodies, unclassified**), `CLAUDE_VERDICT_SET_PROVEN` (now **emitted** as a marker, was internal), inline enumeration, and the NOOP / draft / silent / settle structural guards. Net: the script gets simpler. Added a `CLAUDE_FIXTURE_DIR` test seam (additive; production path unchanged).
+- `skills/review-loop/references/engine-claude.md` — new **§ Verdict judge** contract: judge prompt, tiered-verdict schema, the **verbatim masking rule** + proven-set fail-closed, the false-CLEAN-dangerous instruction (IDEA-018 philosophy), the structural-vs-semantic split, and the **honest backstop split** (structural anchor for inline-thread findings; judge-instruction + proven-set for summary-body-only findings — no "guarded two ways" overclaim, architect C1). Clean-detection + review-state-gate sections rewritten to defer to the judge; regex-era calibration blocks banner-superseded (kept as judge *input* — "what claude's prose looks like in the wild").
+- `skills/review-loop/SKILL.md` — **§ Per-engine model-judge** dispatch (cache the verdict per head SHA — it's a model call); the typed carve-out on the "clean is structural" rule; `BLOCKING`→iterate, `CLEAN`/`NON_BLOCKING`-only→clean for the multi-engine sync gate; the R3 disposition **mode-split** (interactive surfaces + proposes `/idea`; sprint-auto auto-formalizes IDEA files via `SPRINT_AUTO_INTEGRATION_WORKTREE`) + the **in-PR-IDEA acknowledgment convergence loop** (a committed IDEA doc is the in-band signal the next cycle's judge reads to stop re-raising); `claude_judge_verdict` + `claude_non_blocking[]` scratch slots.
+- `skills/review-loop/references/multi-engine-sync.md` — scratch schema + convergence-gate composition: a claude `NON_BLOCKING`-only verdict counts clean for the all-engines gate (items carried to hand-back / auto-formalized), proven-set fail-closed still applies.
+- `skills/review-loop/references/engine-adapter-contract.md` — the claude-row "clean source" cell + the clean-structural framing gain the prose-only-surface carve-out (surfaced by this wrap's Step 6 downstream-docs scan; the cell still described the removed regex mechanism).
+- `skills/work/references/WATCHER_HYGIENE.md` — added Hard Rules 7 + 8 for `Monitor` / background poll-scripts: never `set -u` (the sourced host shell-snapshot references unbound vars like `ZSH_VERSION`; nounset turns that into a fatal flood that silently stalls the loop), and match poll markers with subshell-free case-insensitive `grep -iE "^${e}_MARKER="` (nested `$(… | tr …)` anchors parse mismatched in the background shell). Both are the "silent-timeout" failure class — only safe when the watcher is an accelerator over a resilient spine ("correctness never depends on the accelerator"). Compounded from the IDEA-021 review-loop Monitor dogfood.
+
+### Added
+- `tests/test_claude_material_surfacing.sh` + `tests/fixtures/claude/` (6 fixtures) — the **asymmetric test gate** (architect C2): (a) deterministic material-surfacing (STATUS, in-window verdict enumeration, verbatim bodies, `CLAUDE_VERDICT_SET_PROVEN`); (b) the **false-CLEAN hard gate** on the structurally-detectable part — for the dangerous fixtures (summary-body-only blocking finding, dual-verdict masking, marker-less prose, unprovable verdict set) the adapter MUST surface the concern verbatim + hold the structural fail-closed, so the judge can't be starved of a masked verdict; the semantic NOT-CLEAN *reading* of pure prose is judge-eval/advisory (a model can't run in bash CI); (c) advisory CLEAN-vs-NON_BLOCKING (the dogfood clean-recap fixture, the original false-positive). `make test-claude` + a `make test` aggregate target.
+
+## v5.2 — review-loop: Monitor-accelerated Phase 4 wait
+
+Minor release ([IDEA-021](docs/archive/2026-06-idea-021-monitor-accelerated-review-loop-wait/IDEA-021-monitor-accelerated-review-loop-wait.md), [#207](https://github.com/infohata/mind-vault/pull/207)). The `/review-loop` Phase 4 wait gains an event-driven accelerator: a bounded, read-only `Monitor` re-enters the loop the moment an engine verdict lands, instead of polling blind on a fixed cadence — inspired by Fable 5 actively hunting review comments as they arrive. The `ScheduleWakeup` spine remains the resilient backstop (lengthened to 20 min), so the Phase 4 decision logic is unchanged and correctness never depends on the Monitor (a vanished/auto-stopped Monitor is a silent no-op). Architect-reviewed 🟡 → must-fix F1/F3 + should-fix F2/F4/F5 folded.
+
+### Added
+- `skills/review-loop/references/MONITOR_ACCELERATION.md` — loop-agnostic recipe for the accelerator: the poll-script template (read-only — calls only `find_*_comments.sh`, never a `*_retrigger.sh`; `cd`-inside-loop per WATCHER_HYGIENE Rule 4; **frozen `ARM_SHA` vs live HEAD** for sha-change detection, mirroring Phase 4 step 3; engine-error as a strict subset of the escape-hatch table, **never** off `CONCLUSION`), the three trigger events (`all-done` / `sha-changed` / `engine-error`), the `TaskStop`-first-on-every-wake GC discipline + the vanished-Monitor-is-a-no-op rule, and the narrow bounded-`timeout_ms` carve-out from WATCHER_HYGIENE Hard Rule 3 (read-only API pollers only, not test watchers).
+
+### Changed
+- `skills/review-loop/SKILL.md` — Phase 4 backstop cadence 270s→1200s (the Monitor handles fast detection; the `ScheduleWakeup` is the resilient spine); `max_idle_polls` 20→10 in Hard bounds (10 polls ≈ 3.3h, within `max_active_work_minutes`); Phase 4 step 1 arms the Monitor after the scratch write; step 2 makes unconditional `TaskStop` the first action of every wake; decision-tree idle branch updated; References entry added.
+- `skills/review-loop/references/multi-engine-sync.md` — **F1**: de-numbered the leaked `max_idle_polls × 270s` budget (both factors changed under this release) to reference `SKILL.md` § Hard bounds + Phase 4 step 1 by name; added the "the Monitor's `all-done` trigger is this sync gate in event form" pointer.
+
+- `docs/guides/GIT_WORKFLOW.md` — converted the integration-branches ASCII fan-out diagram to a mermaid `flowchart` (single integration-branch node fanning out to per-IDEA PRs and emitting the `[INTEGRATION]` PR to `main`), matching the repo's other mermaid diagrams.
+- **Dogfood-hardened** (live `/review-loop 207` run of this very feature surfaced six fixes across two cycles, all folded in):
+  - Monitor poll-script matches markers with case-insensitive `grep -iE "^${e}_CHECKRUN="` — the prior nested `$(… | tr a-z A-Z …)` parsed to a mismatched anchor in the Monitor's background shell, so it never detected `all-done` and timed out silently (cycle 1).
+  - Monitor poll-script uses `set -o pipefail` only, **never `set -u`** — the Monitor's sourced shell-snapshot references `ZSH_VERSION` unbound, which nounset turns into a fatal flood that stalls the loop (cycle 2).
+  - `engine-error` trigger narrowed to `failure|cancelled|timed_out` (drops `action_required`/`neutral` — normal findings-bearing completions caught by `all-done`; bugbot completes findings as `neutral`).
+  - Monitor re-armed as part of a single **wait-state bundle** on every decision-tree loop-back, not just first entry (gap flagged by bugbot's own review of this PR); the vestigial 180s first-poll dropped to the 1200s backstop from the first wait.
+  - Scratch-persistence `idle_polls` cap corrected `/20 → /10` to match the lowered bound (flagged by claude's review).
+  - Both engine failures were silent no-ops absorbed by the `ScheduleWakeup` backstop + adapter re-fetch — the "correctness never depends on the Monitor" resilience design validated under two real Monitor failures.
+
+### Fixed
+- `docs/guides/GIT_WORKFLOW.md` — corrected a stale multi-engine note that claimed claude "needs no explicit retrigger / the loop skips claude in the retrigger step". Since the dual-substantive-verdicts correction, claude **is** retriggered after a fix push once it has posted its first review (the `synchronize` auto-run skip-no-ops); only a still-in-flight first review withholds it. Brought in line with `SKILL.md` Phase 3 + `engine-claude.md` § A7. (Pre-existing drift surfaced by this PR's wrap Step 6 scan.)
+
+## v5.1.14 — compound: OpenRouter reasoning-token streaming + disconnect-persist instance state
+
+Patch release. Compounded from an LLM-chat feature on a consuming Django project (making assistant reasoning functional, persisted, and displayed) — surfaced two reusable lessons. References-first; one minimal SKILL.md pointer.
+
+### Added
+- `skills/django/references/OPENROUTER_REASONING_API.md` — OpenRouter reasoning-token streaming: request the top-level `reasoning.effort` param (maps to Gemini `thinkingLevel`); read-back via `delta.reasoning` (string) AND/OR `delta.reasoning_details[]` (typed: `reasoning.text` readable vs `reasoning.encrypted` opaque) — there is NO `delta.thinking` field; the **dual-channel dedup gotcha** (OpenRouter mirrors the same reasoning into both channels → yielding from both double-persists; prefer the array, fall back to the string only when the array is absent); reasoning **encrypted on tool-CALL turns** (echo it back for chain-of-thought continuity); tokens under `usage.completion_tokens_details.reasoning_tokens`. Pointer added to `skills/django/SKILL.md`.
+
+### Changed
+- `skills/django/references/ASYNC_WEBSOCKET.md` — added "Persisting partial streamed content across a mid-stream disconnect": the stream accumulator MUST be instance state (`self.x`), never a method-local — `disconnect()` is a separate method and can only reach instance attributes; init once before the tool-call loop (no per-iteration reset); thread the buffer through ALL save sites (success / failed / disconnect) via one consolidated helper.
+
 ## v5.1.13 — compound: rootless-Docker deploy gotcha + Actions-billing review diagnostic
 
 Patch release. Compounded from a production rollout on a consuming project — the first deploy after a rootless-Docker cutover failed because a non-login deploy shell (`screen … bash -c`) misses the profile `DOCKER_HOST` and hits the dead rootful socket, making an idempotent deploy script misread "first-time deployment". References-first; zero SKILL.md-body additions.
