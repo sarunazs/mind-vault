@@ -25,6 +25,23 @@ Conceptual prose elsewhere may still call a persona by its display name (`AGENT_
 
 The default matrix lives in `SKILL.md`. This file documents the edges, overrides, and the parallel-worktree flow.
 
+### Domain vocabulary per stack
+
+`SKILL.md`'s matrix names each row by its **concern** so it holds across stacks. This table
+is the lookup aid in the other direction: given a framework concept, which row is it? It is
+a convenience, not the criterion — a stack absent from this table still dispatches on the
+concern, because the row describes what the plan item *is*.
+
+| Stack | `backend` row reads | `frontend` row reads |
+| --- | --- | --- |
+| django | models, migrations, signals, DRF viewsets/serializers, Channels consumers, Celery tasks, ORM query layer | templates, Alpine state, HTMX partials, Bulma components, Cotton components, static assets |
+| laravel | Eloquent models, migrations, Form Requests, API Resources, queued jobs / Horizon, policies & gates | Blade views and components, Livewire / Inertia where present, Vite assets |
+| extjs | — (no backend; the API's own stack resolves separately) | `Ext.define` components, ViewModel binds and formulas, ViewControllers, the Ajax service layer, `ui:` / SCSS theming, Sencha Cmd build |
+
+The `extjs` backend cell is empty for the same reason its row in the auto-detect table below
+is: it is a frontend-only stack. A plan item touching that app's API dispatches against
+whatever backend the API itself resolves to, detected independently.
+
 ### Ambiguous domains
 
 Some plan items span multiple personas. Resolve by the **primary artifact touched**, not by the item's stated intent.
@@ -36,6 +53,8 @@ Some plan items span multiple personas. Resolve by the **primary artifact touche
 | "Dockerise the new Celery queue" | `docker-compose.yml` + entrypoint | `devops` |
 | "Add integration test for the new endpoint" | `test_*.py` | `test-engineer` |
 | "Refactor permission layer across auth+billing+kb apps" | Spans 3 apps, shared base class | `architect` (author mode) |
+| "The dialog's recipient field is empty when opened from the grid" | ViewModel bind + component config (ExtJS) | `frontend` |
+| "Queue the reminder email instead of sending inline" | Job class + queue config (Laravel) | `backend` |
 
 If a single item genuinely touches two domains, split it into two items first — the plan is expressing two logical units and should have been split at plan time.
 
@@ -83,7 +102,8 @@ stack:
 ```
 
 A single value (`stack: django`) is shorthand for `backend: django` with the frontend
-left to auto-detect.
+left to auto-detect. A frontend-only stack pins just the one key
+(`frontend: extjs-frontend`) and leaves `backend:` to its own signal.
 
 ### Auto-detect signal table
 
@@ -97,6 +117,22 @@ misdetected as a Node backend.
 | django | `manage.py`, `settings.py` | Django templates + `django-cotton` / `templates/cotton/` |
 | laravel | `composer.json` + `artisan` | `resources/views/*.blade.php` |
 | node | a server entry file (`server.js` / `app.js`) — NOT `package.json`, which stays frontend-only (A2); pin a Node *backend* via `dispatch.md` if the entry file is absent/ambiguous | `package.json` (frontend tooling) |
+| extjs | — (no backend; the API's own stack resolves separately) | `app.json` with `"framework": "ext"` + `"toolkit": "modern"`, `@sencha/ext*` in `package.json`, or `Ext.define(` under `app/**` |
+
+**Precedence rule (A3): a named framework marker outranks the generic `package.json`
+frontend signal.** Every JS-framework repo ships a `package.json`, so that row is the
+*fallback* — it resolves `node` only when no framework marker matched. An ExtJS repo has
+both; it resolves `extjs`, never `node`.
+
+**A3 is a general rule, not an ExtJS carve-out.** It governs every repo carrying a named
+frontend marker *and* a `package.json` — a Laravel app with Vite/Tailwind, a Django app
+with a webpack build. A2 only separated backend from frontend detection; it never ordered
+two competing *frontend* signals, so that case had no rule at all until now. A3 writes
+down the behaviour those repos already depended on: `resources/views/*.blade.php` resolves
+`laravel`, not `node`, however much build tooling sits beside it.
+
+A frontend-only stack (`extjs`) leaves the backend unresolved by design — pin or detect
+the backend independently, or let its adapter announce the gap.
 
 If backend and frontend signals point at different stacks (Laravel backend + JS
 frontend), that is valid — resolve each independently. If signals are absent or
@@ -104,9 +140,9 @@ ambiguous, fall through to step 4 (ask once). Per the fail-open contract, an ada
 whose stack never resolves enforces craft-only and **announces** the gap — it does not
 silently skip the stack rule.
 
-No executable detector ships in Phase 1 — these signals are read by the dispatcher /
-agent directly. A `tools/detect-stack.sh` is deferred until a real third stack justifies
-it.
+No executable detector ships — these signals are read by the dispatcher / agent
+directly. A `tools/detect-stack.sh` stays deferred; the table is short enough to read,
+and the precedence rules (A2/A3) are the part that needs stating, not automating.
 
 ## Parallel worktree setup
 

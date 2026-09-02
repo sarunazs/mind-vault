@@ -8,7 +8,7 @@
 
 ______________________________________________________________________
 
-**v5 — demonstrated on a second stack (IDEA-014 Phase 2): `skills/laravel` + `skills/laravel-frontend` fill all 10 [`skills/work/references/SKILL_CONTRACT.md`](skills/work/references/SKILL_CONTRACT.md) contract headings with ZERO edits to any `agents/AGENT_*.md` — the empty `agents/` diff is the proof that the craft/stack split (v4.9, Phase 1: all 8 personas split into a craft core + `## Stack adapter`) is genuinely stack-agnostic, not Django with indirection. A real-repo Laravel dogfood follows as a v5.x fast-follow. Recent line: the `/review-loop` claude engine classifies verdicts with an orchestrator-inline **model-judge** (`{CLEAN \| BLOCKING \| NON_BLOCKING[]}`) instead of a prose regex — the adapter just surfaces material; carve-out typed to *prose-only verdict surface*, not engine name (v5.3, IDEA-022), event-driven `/review-loop` Phase 4 — a bounded, read-only `Monitor` accelerates the `ScheduleWakeup` wait, re-entering the moment an engine verdict lands (v5.2, IDEA-021), installable as a native Claude Code plugin (`/plugin install mv@mind-vault`) alongside the symlink scripts — additive, coexist (v5.1, IDEA-017), new `skills/python` language-base tier beneath the framework skills (v4.8, IDEA-009), split `/wrap` into `/wrap` (docs) + `/land` (merge + teardown) and retire the double-review — canonical chain `/work → /wrap → /review-loop → /land` (v4.7), Claude Code Review as a third `/review-loop` engine (v4.6).**
+**v5 — demonstrated on a second stack (IDEA-014 Phase 2): `skills/laravel` + `skills/laravel-frontend` fill all 10 [`skills/work/references/SKILL_CONTRACT.md`](skills/work/references/SKILL_CONTRACT.md) contract headings with ZERO edits to any `agents/AGENT_*.md` — the empty `agents/` diff is the proof that the craft/stack split (v4.9, Phase 1: all 8 personas split into a craft core + `## Stack adapter`) is genuinely stack-agnostic, not Django with indirection. A real-repo Laravel dogfood follows as a v5.x fast-follow. Recent line: silence read as success — an alert that stops being *able* to detect its subject keeps reporting nothing, and that silence is indistinguishable from good news; the same shape ran through the review gates (a check-run green with no verdict, a copilot CLEAN blind to findings the API had suppressed), so each now has to produce evidence rather than an absence of noise (v5.8); a third frontend stack — `skills/extjs-frontend` (Sencha ExtJS 7 Modern) fills the four frontend contract headings with the same zero-agent-edit drop-in, and the dispatch table gains the precedence rule that makes a named framework marker outrank the generic `package.json` frontend signal (v5.7); cross-project idea namespacing — bare `IDEA-NNN` is always the current repo's stream, foreign refs are `IDEA-NNN:project`, and inside mind-vault a non-placeholder suffix is a scrub violation by construction (v5.6, IDEA-023); the two-readers register — compound HITL surfaces written plain, agent-loaded reference bodies dense-but-concrete-first, wired at every write-site (v5.5.1–v5.5.2); a ~20-release live-ops hardening corpus in the `shell`/`deployment` references — evidence scripts & false cleans, kill-switch OFF-position fidelity, safe config edits, maintenance-script contract — capped by a nine-root-pattern batch harvest (v5.3.1–v5.5.0); the `/review-loop` claude engine classifies verdicts with an orchestrator-inline **model-judge** instead of a prose regex (v5.3, IDEA-022); event-driven `/review-loop` Phase 4 via a bounded, read-only `Monitor` (v5.2, IDEA-021); installable as a native Claude Code plugin — additive, coexist (v5.1, IDEA-017).**
 
 Cross-host configuration library for AI coding agents — skills, commands, subagent personas, and shared rules, authored once and symlinked into every agent-aware tool.
 
@@ -55,7 +55,7 @@ mind-vault/
 └── tools/         Runtime skill helpers (review-loop adapters, statusline, etc.)
 ```
 
-## Skills (22)
+## Skills (23)
 
 Canonical `SKILL.md` patterns with progressive-disclosure `references/`. Each skill has frontmatter `name` + `description` (the probabilistic trigger), stays under ~500 lines, and pushes deep-dive content to `references/`.
 
@@ -84,6 +84,7 @@ Canonical `SKILL.md` patterns with progressive-disclosure `references/`. Each sk
 | **django-frontend**    | HTMX + Alpine + Bulma + Crispy Forms — partial dispatch, modal/formset JS contracts, safe query-string generation. Pairs with `django`.                                                                                            |
 | **laravel**            | Laravel 12 backend conventions across the 6 contract concerns — Eloquent eager-loading (`with()`/`preventLazyLoading`), Form-Request + API-Resource input boundary, queued jobs on Redis/Horizon, tenant data-isolation via global scopes, Policy/Gate authz, Pest testing + split-by-ownership translations. The second stack (IDEA-014 Phase 2). |
 | **laravel-frontend**   | Laravel 12 frontend conventions across the 4 contract concerns — plain server-rendered Blade baseline (+ Livewire 4 / Inertia 2 opt-in variants), `@fragment`/`->fragmentIf` partials (the django-frontend twin), Blade components (Flux as a license-gated UI kit), vanilla-JS/`wire:submit` form lock. Pairs with `laravel`. |
+| **extjs-frontend**     | Sencha ExtJS 7 Modern SPA conventions across the 4 contract concerns — ViewModel/ViewController MVVM, a promise service layer over `Ext.Ajax` owning the JSON envelope (no fragments), `Ext.define` + named-`ui` components on a shared/desktop/phone split, loadmask + native-submit Enter guard as the form lock. References cover the Jest `Ext`-stub harness, Playwright ComponentQuery e2e, i18n key sweep, and the Sencha Cmd/webpack build gate. Frontend-only — pairs with whichever backend serves the API. |
 | **deployment**         | Docker Compose production deploys — change-aware scripts, pre/post-migration backups, screen-session remote execution, Let's Encrypt SSL.                                                                                          |
 | **surgical-tdd**       | Targeted test execution for large Python monoliths (Django runner + pytest nodeids + `--lf` / `-k` / `pytest-xdist` levers).                                                                                                       |
 | **artefact-retrieval** | Sweep IDE workspaces (Cursor / Antigravity / Claude Code) for plans and analyses; import into `docs/artefacts/`.                                                                                                                   |
@@ -110,7 +111,7 @@ Canonical `SKILL.md` patterns with progressive-disclosure `references/`. Each sk
 
 ## Commands
 
-Slash commands surface from two sources via the host's symlink: `commands/` (6 commands) and `skills/` (every skill with a `name:` frontmatter is invocable as `/<name>` per the skill-writer convention). The two groups below list the **sprint-workflow** + **automation** + **review/PR** entries — the most common surfaces. Engineering-pattern skills (`python`, `shell`, `django`, `django-frontend`, `laravel`, `laravel-frontend`, `deployment`, `surgical-tdd`, `dependabot-triage`, `mobile-ux-polish`, `skill-writer`, `artefact-retrieval`) are also slash-invocable but typically activate via trigger-phrase rather than direct slash; see each skill's frontmatter.
+Slash commands surface from two sources via the host's symlink: `commands/` (6 commands) and `skills/` (every skill with a `name:` frontmatter is invocable as `/<name>` per the skill-writer convention). The two groups below list the **sprint-workflow** + **automation** + **review/PR** entries — the most common surfaces. Engineering-pattern skills (`python`, `shell`, `django`, `django-frontend`, `laravel`, `laravel-frontend`, `extjs-frontend`, `deployment`, `surgical-tdd`, `dependabot-triage`, `mobile-ux-polish`, `skill-writer`, `artefact-retrieval`) are also slash-invocable but typically activate via trigger-phrase rather than direct slash; see each skill's frontmatter.
 
 **Sprint workflow:** `/ideate`, `/idea`, `/plan` (alias `/brainstorm`), `/work`, `/wrap`, `/land`, `/compound`, `/ingest-backlog`.
 
@@ -132,14 +133,16 @@ Invoke as `/<command-name>` in any host that supports slash commands. See [docs/
 
 The four rules under `rules/` are auto-loaded into every session via `~/.claude/rules` symlink. They cover guardrails that apply broadly across stages — not domain-specific patterns. Domain-specific patterns that used to be rules now live as **skill references** that load on-demand when the relevant skill activates (see § Skill references below).
 
-- **[RULE_git-safety](rules/RULE_git-safety.md)** — HITL gate on `main` and the release branch; feature branches are the agent's sandbox. Governs `/compound`'s branch policy and the review-loop's autonomous-commit permissions.
+- **[RULE_git-safety](rules/RULE_git-safety.md)** — HITL gate on `main` and the release branch; feature branches are the agent's sandbox. Governs `/compound`'s branch policy and the review-loop's autonomous-commit permissions. Also the **fold-into-one-PR default** — extend the open PR rather than stacking a second (doc/version/review fixes especially), which is what keeps two branches off the same append-at-top `CHANGELOG` / ideas-index lines — plus the stacked-PR strand-off-base recovery.
 - **[RULE_self-sweep-before-push](rules/RULE_self-sweep-before-push.md)** — Pyflakes touched-files sweep + Contract-Change Sweep (grep ALL callers when a shared helper's signature/return type changes) between the review-loop's Phase 2 and Phase 3. Saves 5-10 min of review-cycle wall-time per trivial dead-import / unused-local / missed-caller finding.
 - **[RULE_rename-before-drop](rules/RULE_rename-before-drop.md)** — Refactor commit-sequence discipline: rename references first, full test pass, then drop the legacy symbol, re-test for regressions. Per-commit compilability + bisectability; missed references surface during the rename-only test pass instead of hiding inside post-drop noise.
 - **[RULE_cross-idea-amendments](rules/RULE_cross-idea-amendments.md)** — Shipped IDEAs are not stones — amend freely as conditions change, with bidirectional documentation between the amending and amended IDEAs. Fires at any workflow stage when downstream work needs to modify an upstream IDEA's files.
 
 ## Skill references (load on demand)
 
-Domain-specific patterns that used to live in `rules/`. Each is loaded by its owning skill at the moment it's relevant — keeps always-on context lean.
+Domain-specific patterns that live under their owning skill (several used to live in `rules/`). Each is loaded at the moment it's relevant — keeps always-on context lean.
+
+- **[CROSS_PROJECT_IDEA_REFS](skills/idea/references/CROSS_PROJECT_IDEA_REFS.md)** — bare `IDEA-NNN` always means the current repo's stream; foreign refs are `IDEA-NNN:project` (repo's own name, never an alias). Inside mind-vault a non-placeholder suffix is a scrub violation by construction. **Loaded by:** `/idea`; wired from `/compound`'s scrub gate, `/wrap`'s devlog step, and `RULE_cross-idea-amendments`.
 
 - **[I18N_WORKFLOW](skills/django/references/I18N_WORKFLOW.md)** *(was RULE_i18n-workflow)* — Django translation map-first workflow; `.po` files are generated, never hand-edited. Per-app sharded-map ownership rule. **Loaded by:** `/work` when touching translations, `skills/django` + `skills/django-frontend`.
 - **[IDEAS_LOCATION_STATUS](skills/idea/references/IDEAS_LOCATION_STATUS.md)** *(was RULE_ideas-location-status)* — IDEA files live in exactly two places: `docs/ideas/` while in backlog, `docs/archive/YYYY-MM-idea-NNN-<slug>/` thereafter. Single `git mv` at `/plan` time; all subsequent status transitions are frontmatter-only. **Loaded by:** `/idea`, `/plan`, `/work`, `/wrap`, `/compound`, `/ingest-backlog`.
@@ -280,7 +283,7 @@ Commit all non-sensitive configuration to git.
 
 Licensed under the [Apache License, Version 2.0](LICENSE). Copyright 2026 Kestutis Januskevicius.
 
-<!-- wrap:readme-currency-audited 2026-06-17 -->
+<!-- wrap:readme-currency-audited 2026-09-01 -->
 
 <!-- wrap:readme-currency
 N: 5
