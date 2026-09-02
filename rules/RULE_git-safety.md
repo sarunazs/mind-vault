@@ -47,7 +47,7 @@ Let me know once it's merged and I'll handle local cleanup.
 
 **Being asked is not authorization.** A user saying "merge" does not lift Hard Rule 2 — protected-branch merge is a *human action*, so hand back the button (above). The one exception is the deliberate break-glass in the enforcement hook below (`GIT_SAFETY_ALLOW=1`), which the agent never adds on its own.
 
-**Structural enforcement (backstop for this rule).** This rule is behavioural context and can be rationalised away exactly when it matters (real incident: an agent merged to protected `main` with the rule loaded, reading a user "merge" as license). Mind-vault ships a `PreToolUse(Bash)` hook — [`hooks/block-protected-branch-writes.py`](../hooks/block-protected-branch-writes.py), wired in [`hooks/hooks.json`](../hooks/hooks.json) — that **denies** `gh pr merge`, API merge writes, and direct/force/bare pushes to a protected branch at the tool layer, so a lapse can't move a protected tip. Forward-sync, feature-branch pushes, and `gh pr create` pass through. Symlink-channel installs register it by hand in `~/.claude/settings.json`. The *why* (behavioural rules need structural backstops for irreversible ops) is in [`../docs/rules/RULE_git-safety-rationale.md`](../docs/rules/RULE_git-safety-rationale.md).
+**Structural enforcement (backstop for this rule).** This rule is behavioral context and can be rationalized away exactly when it matters (real incident: an agent merged to protected `main` with the rule loaded, reading a user "merge" as license). Mind-vault ships a `PreToolUse(Bash)` hook — [`hooks/block-protected-branch-writes.py`](../hooks/block-protected-branch-writes.py), wired in [`hooks/hooks.json`](../hooks/hooks.json) — that **denies** `gh pr merge`, API merge writes, and direct/force/bare pushes to a protected branch at the tool layer, so a lapse can't move a protected tip. Forward-sync, feature-branch pushes, and `gh pr create` pass through. Symlink-channel installs register it by hand in `~/.claude/settings.json`. The *why* (behavioral rules need structural backstops for irreversible ops) is in [`../docs/rules/RULE_git-safety-rationale.md`](../docs/rules/RULE_git-safety-rationale.md).
 
 ### 3. Feature branches — agent has normal commit authority
 
@@ -60,7 +60,7 @@ On any non-protected branch the agent commits freely. **No per-commit approval p
 - ❌ `--no-verify`, `--no-gpg-sign`, or any flag that bypasses hooks or signing, unless the user explicitly asks.
 - ❌ Plain `git push --force` — always use `--force-with-lease`.
 - ❌ Force-pushing to a branch with an open PR *without informing the human first* — it invalidates existing review threads.
-- ❌ Deleting or resetting a branch the agent doesn't recognise — it may be someone else's in-progress work.
+- ❌ Deleting or resetting a branch the agent doesn't recognize — it may be someone else's in-progress work.
 - ❌ Committing files that likely contain secrets (`.env`, `credentials.json`, private keys). Warn the user if a commit includes any.
 
 ### Compound-command gotcha: the "main" over-match in *string-level* guards
@@ -81,8 +81,98 @@ working around it.
 alone, then run `gh pr create --base main …` on its own. Universally safe, and single-purpose calls
 match permission allowlists cleanly anyway. Don't reach for the break-glass override
 (`GIT_SAFETY_ALLOW=1`) — the operation is genuinely allowed, and a permission-layer match wouldn't
-honour it anyway. (Same applies to any command that legitimately names `main`/`master`/`production`
+honor it anyway. (Same applies to any command that legitimately names `main`/`master`/`production`
 as a *target-of* rather than a *push-to*.)
+
+### Fold small work into the open PR — do not stack a second one
+
+**Default: if a PR for this work is open and unmerged, extend it.** Push the follow-up commit
+onto its branch rather than opening a second PR — and never branch a new PR off an open PR's
+branch. This binds hardest on exactly the work most likely to get its own PR by reflex: doc
+finalization, CHANGELOG/version fixes, review-driven fixes, scrub sweeps, "just one more nit".
+
+The cost is not merge count, it is **conflicts on append-at-top shared files**. `CHANGELOG.md`,
+`docs/ideas/README.md`, and the monthly devlog are all written by inserting at the top, so two
+open branches that each add a section conflict on the same lines by construction — and the
+second one conflicts again after every rebase. One PR carrying both edits has no conflict at
+all. Stacking also exposes the strand-off-base hazard documented below.
+
+**A separate PR is right when** the work is genuinely independent of the open one (a different
+IDEA, an unrelated bug), when a large mechanical sweep would swamp review of the substantive
+change, or when the two must ship on different cadences. "It felt tidier" is not one of those —
+neither is "the first PR was already reviewed", which is an argument for one more review cycle,
+not for a second PR.
+
+### Merge strategy: lean toward a merge commit, but this is a preference, not a gate
+
+**Not a hard rule and never a blocker** — squash-merge stays perfectly acceptable, and no merge is
+held up over this. The default simply leans the other way, because squash costs something concrete
+after the merge:
+
+- **`git branch --merged main` cannot see a squash-merged branch.** The squash rewrites the commits,
+  so the branch tip is never an ancestor of `main` and the built-in "is this safe to delete?" answer
+  is unavailable. Post-merge cleanup becomes a content-equivalence investigation instead of one
+  command — and a misleading one once `main` moves ahead, since a plain `git diff main <branch>`
+  then reports differences that are only *older revisions of lines main has since improved*.
+- **Ancestry tests false-alarm.** `git merge-base --is-ancestor <branch-tip> main` is non-zero for
+  every healthy squash-merged branch, so it cannot be used as a landed-check (test the merge commit
+  instead — see the section below).
+- **Tooling ends up working around it.** PR-listing steps have to prefer `gh pr list --state merged`
+  over `git log --merges`, and per-item commit splitting gets justified by "preserves `git bisect`
+  post-squash-merge" — a cost that a merge commit simply does not impose.
+
+**What squash buys**, and it is real: a linear, one-commit-per-PR `main` that reads cleanly. That
+matters most where branches carry noisy WIP commits worth collapsing. It matters least in a
+docs/config repo whose per-PR commits are already individually meaningful and where there is no code
+to bisect — which is why the lean here goes to merge commits.
+
+**Either way, before deleting a local branch, confirm the content actually landed.** With a merge
+commit, `git branch --merged main` is sufficient. After a squash, verify by content and read what
+any diff is actually showing before trusting it.
+
+### Pushing a ref: `origin/<branch>:target`, never the bare local branch
+
+`git fetch` updates **remote-tracking** refs. It does **not** fast-forward your local branches. So
+after a fetch, `origin/<branch>` is current while a local branch you have not checked out and pulled
+is still wherever you left it.
+
+That makes the promote/deploy idiom a trap:
+
+```bash
+git fetch origin
+git push origin <branch>:deploy-pointer          # WRONG — pushes the STALE local ref
+git push origin origin/<branch>:deploy-pointer   # RIGHT — pushes what you just fetched
+```
+
+**The failure is silent and reads as success.** When the stale local ref happens to equal the target
+— the normal case, since the target was promoted from that same commit last time — git reports
+`Everything up-to-date` and exits 0. Nothing was pushed, nothing was wrong, and the operator
+reasonably concludes the promotion landed. The next step then deploys the *previous* release and
+reports success too.
+
+Applies to any `<src>:<dst>` push where the source is a branch you are not currently on: deploy
+pointer branches, release branches, mirrors. **If you are not on the branch, name the
+remote-tracking ref.**
+
+⚠️ Branching has the identical hazard: `git checkout -b feature <branch>` bases on the stale local ref. Use
+`git checkout -b feature origin/<branch>`, or `git switch -c feature origin/<branch>`.
+
+📌 The cheap check, when a push reports `Everything up-to-date` and you expected movement — compare
+the three refs before assuming the target was already current:
+
+```bash
+git rev-parse --short <branch> origin/<branch> origin/<target>
+```
+
+📌 A well-built deploy script fails closed on this: a preflight that refuses when the checkout is
+behind its deploy pointer turns a silent no-op into a loud refusal at the next step. That is a
+safety net, not the fix — the fix is the `origin/` prefix.
+
+⚠️ **A string-level guard on this rule will match the documentation of it.** Writing the wrong form
+down as a negative example is exactly what a naive matcher flags. Strip fenced blocks before
+matching, or the first person to document the hazard is the one who trips the guard — and deleting
+the guard looks reasonable at that moment. See the compound-command gotcha above, which is the same
+class.
 
 ### Stacked PRs: merging in quick succession can strand the dependent PR off-base
 
@@ -105,3 +195,18 @@ a new PR that targets `main` directly — do **not** try to re-merge the strande
 **Avoid it:** after merging A, confirm B's base actually flipped to `main` (PR UI / `baseRefName`) —
 or force it deterministically with `gh pr edit <B> --base main`, or rebase B onto `main` first so it's
 no longer stacked — before merging B. Never batch "merge A, merge B" as one rapid action.
+
+### A path in `.gitignore` proves nothing — tracked files ignore the ignore
+
+`.gitignore` only stops **untracked** files from being added; a file committed *before*
+the ignore rule stays tracked forever, keeps showing local edits as pending diffs (one
+careless `git add -A` away from being pushed), and — the observed incident — carries a
+dev-host/config value on the trunk while every doc and rule in the repo asserts "that
+file is gitignored". Nobody checks, because the ignore line is right there.
+
+**Probe when it matters** (a "gitignored" file shows up in `git status` as modified, or
+you are about to rely on the ignore): `git ls-files --error-unmatch <path>` — exit 0
+means TRACKED. **Fix:** `git rm --cached <path>` (index-only; local copies stay on
+disk). Pull-side effect to announce in the PR: checkouts whose copy is byte-identical
+to the committed version lose the file on pull (they re-create per the project's setup
+doc); locally-modified copies are kept by the local-changes guard.

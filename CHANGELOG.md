@@ -10,9 +10,562 @@ Category keys follow [Keep a Changelog](https://keepachangelog.com/): **Added**,
 
 _(none)_
 
+## v5.8.4 — the store that was never created and the login that never failed loudly
+
+One consuming ExtJS project's day, traced from a single symptom ("the dialog shows an error toast
+instead of opening"): four defect classes across the component layer and the toolchain, plus the
+git-hygiene guardrail the same walk turned up — compounded 2026-09-01.
+
+### Added
+
+- **extjs-frontend / MODERN_COMPONENT_FOOTGUNS §23** — the VM-store silent-null family: a
+  store whose config binds an undeclared data key is never created at all (null forever, no
+  error); even declared ones are null in the construction window (null-guard manual loads —
+  the store autoLoads once its binds publish); and never wrap a dialog open in a promise
+  chain whose `.catch` does HTTP-error recovery — a render throw then masquerades as backend
+  state. Pin recipe included.
+- **extjs-frontend / SENCHA_TOOLCHAIN_AND_BUILD §8** — cross-origin dev login is dead in
+  modern Chrome (`SameSite=Lax` cookie dropped on cross-site XHR + `Access-Control-Allow-Origin: *`
+  invalid with credentials → silent bounce-to-login): the fix is an opt-in dev-server proxy
+  mirroring production's nginx (pinned Host, cookieDomainRewrite, same-origin code path).
+- **extjs-frontend / SENCHA_TOOLCHAIN_AND_BUILD §9** — one `sencha app watch` profile at a
+  time (shared `generatedFiles/`, last writer wins) and the microloader picks the manifest by
+  UA, not by what the dev server built; DevTools emulation lever + the CDP-input-wedge
+  fallback (drive via the framework controller API).
+- **RULE_git-safety** — "a path in `.gitignore` proves nothing": tracked-before-the-rule
+  files keep carrying diffs (and, observed, a config value on the trunk everyone believed
+  was ignored); probe `git ls-files --error-unmatch`, fix `git rm --cached`, announce the
+  pull-side effect.
+- **extjs-frontend / SENCHA_TOOLCHAIN_AND_BUILD §10** — post-deploy, the OLD app runs
+  first: the microloader boots from its `localStorage` manifest cache and only then finds
+  the new build — via a browser-NATIVE "updated, reload?" confirm that freezes the renderer
+  (CDP timeouts) until a human dismisses it. Verify a deploy against the server artifact
+  (manifest stamp + symbol grep in the served `app.js`), never against a booted tab.
+  (The same walk also live-validated RULE_git-safety's push-the-remote-ref section: a
+  `master:staging` promote of a stale local master reported "Everything up-to-date" while
+  staging stayed one release behind — the documented `origin/<branch>:target` form fixed it.)
+
+## v5.8.3 — the detection that terminated in a flag nobody read
+
+A copilot review whose visible inline set was empty carried three real findings in its body's
+suppressed-comments block. The adapter had detected the block since v5.6.1 — but detection only
+withheld the clean signal and set a legacy `CLEAN=` token the orchestrator is explicitly told to
+ignore, so the loop counted zero findings and read CLEAN. The findings were caught by a hand-run
+`gh api` on the review body, not by the loop — compounded 2026-08-28.
+
+### Added
+
+- `tools/find_copilot_comments.sh` — emits `COPILOT_SUPPRESSED=<n> REVIEW=<id> COMMIT=<sha>
+  AT=<ts>` plus the suppressed items verbatim (each carries `file:line` + text, so they are as
+  structured as an inline finding — they just arrive in the review body).
+- `tests/test_copilot_clean_detection.sh` § (b) — asserts the marker, the surfaced items, that the
+  review-stats list is not swallowed by the extractor, and that clean fixtures emit no marker. All
+  proven red against the pre-fix adapter first.
+
+### Fixed
+
+- `skills/review-loop/SKILL.md` § Per-engine fetch — suppressed findings now COUNT toward the
+  active-finding total, so an engine that surfaced them is never clean. The new marker is
+  authoritative, unlike the legacy `CLEAN=` token beside it; the dual-signal output shape carries
+  the suppressed count.
+- `skills/review-loop/references/engine-adapter-contract.md` — registers `<ENGINE>_SUPPRESSED` and
+  states the rule an adapter has to follow: route a withheld-findings signal into the count, never
+  into a second flag.
+
+### Changed
+
+- `skills/review-loop/references/engine-copilot.md` § Suppressed comments — second reversal on this
+  section, corrected in place: detection was not delivery. The general lesson recorded with it —
+  when an adapter learns something the verdict machinery is told to ignore, that is not a
+  mitigation. The completeness caveat and the human-glance hand-back line still stand.
+
+## v5.8.2 — gate the image you ship, encode where the string lands, probe the contract before the UI
+
+One consuming ExtJS project's week: a CI gate that builds the release image and runs the suite
+against it (the toolchain that actually works), a stored-XSS sink closed with a three-context
+encoding model, and a paginator that was NOT shipped because one `limit=5` request showed the
+backend ignores paging — compounded 2026-08-28.
+
+### Added
+
+- `skills/extjs-frontend/references/SENCHA_TOOLCHAIN_AND_BUILD.md` §7 — the CI gate on the release
+  image: build the production Dockerfile in Actions (npm cripples Sencha Cmd; the Dockerfile is the
+  one working toolchain), run it with a *resolvable* backend host, verify the static contract, run
+  Playwright in a static mode on both bundles; same-repo/dispatch/push guard, never cancel a trunk
+  run, warm ≈7 s with `tests/` dockerignored.
+- `skills/extjs-frontend/references/PLAYWRIGHT_COMPONENTQUERY_E2E.md` §10 — boot probes on the
+  production bundle: the launch chain catches its own rejection, so `pageerror` alone is vacuous —
+  add console + failed-response collectors, a tolerated-404 whitelist with reasons, and tolerate a
+  framework's bare-`undefined` rejection by shape only; prove the probe with a deliberate red.
+- `skills/extjs-frontend/references/MODERN_COMPONENT_FOOTGUNS.md` §21–22 — encode at the sink in
+  three contexts (html/attribute, JS string inside an inline handler, lossless DOM-id round-trip)
+  plus a style allowlist, pinned benign-first and red-proven; and the rule that the second
+  hand-copied framework guard is an `overrides/` file (the `Ext.form.Panel` Enter guard with an
+  opt-in `enterAction`).
+- `skills/plan/references/PRODUCTION_PATH_VERIFICATION.md` § The backend contract is an axis too —
+  a UI that depends on paging/sorting/a status field names its discriminating request and plans
+  the negative branch; `agents/AGENT_architect.md` PASS 5 gets the matching probe.
+- `skills/deployment/references/CICD.md` § Path filters for image-building workflows —
+  `paths-ignore` for docs-only changes, with the two checks that make it safe (no build inputs on
+  the list; not a required status check).
+
+### Changed
+
+- `skills/extjs-frontend/SKILL.md`, `skills/deployment/SKILL.md`, `skills/plan/SKILL.md` —
+  reference one-liners extended for the sections above.
+
+## v5.8.1 — the record the class threw away, the formula that never ran, and the tap that sent
+
+Three fixes on one consuming project's dialog, each "shipped" once before it actually worked,
+and one browser-pilot slip — compounded 2026-08-27. The common thread: verify on the rendered
+thing, not on the artifact that should have produced it.
+
+### Added
+
+- `skills/work/references/LIVE_PILOT_VERIFICATION.md` — four rules for verifying a change by
+  driving a deployed UI: never tap a side-effecting action on data you don't own (confirm the
+  code path first — a "preview" tap on a live templated record sent a real email); verify
+  styling on the rendered element, not on the CSS being present; inject → measure → iterate to
+  zero → port for parity work; wrap the factory to capture what a controller actually passes.
+- `skills/extjs-frontend/references/MODERN_COMPONENT_FOOTGUNS.md` §18–20 — `Ext.Component#applyRecord`
+  nulls any non-Model `record`; a view-model formula with an optional ancestor dependency never
+  runs; desktop `Ext.field.Date` takes its ui from `floatedPicker`, an empty field pre-selects
+  today, and the base theme's selected cell is `$base-color`-on-white.
+
+### Changed
+
+- The `/work` dispatch matrix and the `backend` / `frontend` / `curator` persona
+  descriptions were written in Django's vocabulary while the stack layer had already gone
+  plural (django / laravel / node / extjs resolve in `persona-dispatch.md`, and every
+  persona body resolves its mechanics against the active skill). The matrix row an ExtJS
+  plan item had to match read "Templates, Alpine, HTMX, Bulma", and the frontmatter
+  `description:` that decides persona selection said "Django client-side work" — so the
+  stack-agnostic personas were advertised as single-stack. Rows and descriptions now name
+  the **concern**; the per-stack token mapping moved to `persona-dispatch.md` §
+  "Domain vocabulary per stack", beside the auto-detection that resolves the active stack.
+- `LIVE_PILOT_VERIFICATION.md` rules 2 and 4 stated their originating incident instead of
+  their mechanism, in a framework-agnostic reference — "the field's picker took its ui from
+  a different config key" names no field and no key, and rule 4's "here: the class dropped
+  it" pointed at an incident the file never told. Rule 2 now states the generic failure (a
+  shipped CSS rule still has to MATCH the element, then WIN against every rule that matches
+  it — both DOM facts, so grepping the bundle proves nothing) with an ordered probe; rule 4
+  names the two hypotheses its factory-wrap separates. Framework-specific causes live once,
+  in the ExtJS footguns, cited by greppable label.
+
+## v5.8.0 — silence read as success: decayed alerts, a green check with no verdict, and the gates that could not tell
+
+Two compound streams landed on the same failure, so they ship as one release. An alert that breaks
+loudly is a nuisance; an alert that stops being *able* to detect its subject keeps evaluating,
+reports nothing, and its silence is indistinguishable from good news. Four independent instances
+turned up in one operational stretch — none found by an alert firing, all four found by someone
+checking whether it still could.
+
+The same shape kept turning up in the tooling built to guard against it. The automated-review gate
+reported a review finished and clean while it was still running. A different install's review check
+completed green having posted no verdict at all. And a verdict watcher matching the latest comment
+re-read a pre-fix verdict as the fix's result. Each one answered a question it had lost the ability
+to answer, and each answer read as good news.
+(2026-08-21 – 2026-08-25, [#240](https://github.com/infohata/mind-vault/pull/240) + [#241](https://github.com/infohata/mind-vault/pull/241))
+
+### Added
+
+- `skills/deployment/references/ALERT_SILENT_DECAY.md` — the four failures, each with the worked
+  case that surfaced it. **A metric can change meaning without changing its name**, and that is far
+  worse than a rename: a rename breaks the rule loudly, a meaning change leaves it producing a wrong
+  answer. Carries the protocol for both sides — producers emit a new name for the new meaning and
+  call it a MINOR, consumers grep their rule files on every producer upgrade. **A rule keyed on a
+  conditionally-emitted series has no denominator**, so it silently covers fewer subjects than it
+  appears to; the guard belongs at total absence, never per subject, because a per-subject version
+  fires for weeks against a correct system and gets muted. **Suppression windows are pinned to a
+  schedule someone else owns**, so they degrade silently and in the noisy direction — with the
+  measured case where 30 of 64 episodes escaped windows that looked correct by inspection, and the
+  rule that the one outlier left un-suppressed was the only real signal in the sample. And **rule
+  state is not delivery**: the rule engine's own alert series says nothing about what a human
+  received, which is why one gap sat unnoticed from the day it was introduced.
+
+### Changed
+
+- `skills/review-loop/references/engine-claude.md` gains the counterexample to the install-stability
+  reframe: one PR produced two disagreeing verdicts on one SHA, then a commented skip, then a
+  **silent** skip — green check, no comment at all. The prior section now carries a forward qualifier
+  so its confident reading cannot be taken alone. What survived the incident is what was already
+  written down: enumerate every head-SHA verdict, and after a fix push take a fresh verdict or fire
+  the retrigger, whatever the check conclusion says. New alongside it, the **watcher timestamp
+  fence** — an ad-hoc poll that matches the latest comment re-reads a pre-fix verdict as the fix's
+  result, which happened twice in one loop. Record `T0` at the push and accept only material newer
+  than it. (The shipped adapter already window-fences; this is for orchestrator-side watchers.)
+
+- `skills/review-loop/references/engine-claude.md` gains three calibration blocks from a live loop.
+  **The review-state check could report finished-and-green while the review was still running** — it
+  looks for jobs belonging to one workflow whose commit matches the branch under review, and a
+  manually retriggered review matches neither: it runs under a different workflow, and that kind of
+  job reports the main branch as its commit. Fixing only the workflow name would not have helped.
+  The reliable link is the one the platform already prints — every comment the reviewer posts links
+  the job writing it — so the ids are read out of the comments and any job still running holds the
+  whole check as running; an unreadable job counts as unfinished, never as finished. Also recorded:
+  the reviewer's comment passes through **three** different bodies before it is a verdict, and the
+  first has no checkboxes at all, so a watcher waiting for checkboxes to clear reports success in
+  seconds against a review that has not begun. And **a pull request opened in an earlier session may
+  already carry a review nobody read** — one here had sat four hours with three real findings while
+  being described as "awaiting merge".
+
+- `skills/review-loop/references/engine-claude.md` also gains a citation convention, written
+  because combining the two streams above broke six of its own cross-references. Sections were
+  cited by line number, so appending a section shifted every line below it and the citations
+  resolved to unrelated bullets — while still reading like working references. Nothing failed; a
+  hand-check caught it. That prompted the full sweep and the guard recorded under **Fixed** below.
+  Same class as the decayed alerts and the green-but-blind gate this release is about.
+- `skills/review-loop/references/common-review-findings.md` gains two entries. **A review finding can
+  be right about the smell and wrong about the direction**: one flagged a number that disagreed with
+  every other copy in the repo and advised matching the majority — measuring the live system showed
+  the majority was the stale one, and following the advice would have reinstalled a fact that stopped
+  being true two months earlier. A disagreement between documents is never settled by counting
+  documents. And **a decimal value wearing a binary unit label** — the two answers differ by about
+  two percent, which is exactly small enough to survive every eyeball check.
+- `rules/RULE_self-sweep-before-push.md` gains a **reversal sweep**. Closing a gap is a correction
+  like any other, but it does not feel like one, so nobody greps for the old claim. Measured: four
+  days after a backup gap was closed, two live guides still described it as open — including, under
+  a red heading as the first named problem, the page someone reads while the system is broken. That
+  is the worst carrier: it sends a reader mid-incident to build something that already exists. The
+  rule names the search order, starting with guides and HTML because those are read under pressure
+  and least likely to be open when the fact changes, and it says to keep the half that is still true
+  rather than deleting the warning outright.
+
+- `rules/RULE_self-sweep-before-push.md` gains an **anchor sweep**: editing a document by replacing a
+  landmark heading with new text deletes that heading unless the replacement re-emits it. The body
+  survives and reads as a continuation of whatever was inserted, the page renders perfectly, and
+  nothing complains — found in this very PR by review, not by the sweep that was supposed to catch it.
+  Carries the mechanical check: compare the set of headings before and after, rather than reading the
+  diff, because the deleted line sits at the top of a large block of additions.
+- `rules/RULE_git-safety.md` gains the stale-local-ref push hazard, placed beside the stacked-PR
+  entry it shares mechanics with. `git fetch` updates remote-tracking refs and does not fast-forward
+  local branches, so promoting a deploy pointer from a bare local branch name pushes whatever that
+  branch was when you last checked it out. The failure is silent and reads as success — when the
+  stale ref happens to equal the target, git reports `Everything up-to-date` and exits 0, and the
+  next step deploys the previous release, also reporting success. Names the same hazard in
+  `checkout -b`, the three-way `rev-parse` check for when a push reports no movement you expected,
+  and the note that a string-level guard on this rule will match the documentation of it.
+
+- `skills/shell/references/STRICT_MODE_HAZARDS.md` gains items 12 and 13, both about the gap
+  `set -euo pipefail` does not cover. **A query that succeeds and prints nothing** poisons every
+  command substitution downstream — `set -u` cannot help, because the variable is set, to empty —
+  and the fix is a non-empty assertion on the assignment rather than the use. **A destructive target
+  must be identified by a resolving test, not by its name**, because the failure mode of a wrong
+  target is frequently creation rather than an error: point a provisioning tool at the wrong account
+  and it builds a parallel copy of everything and exits 0. Includes the case where two accounts
+  shared a display name, and the caution that the obvious anchor may not carry the identity at all.
+  Item **14** closes the same loop one level down: **an assertion that
+    cannot express "empty" asserts nothing.** Checking that output is empty by searching it for an
+    empty string fails against empty input, so the case looks like a caught regression while testing
+    nothing at all. Found while writing tests for a reports-green-when-it-should-not bug, which is the
+    same defect one level down.
+
+- `skills/plan/references/PRODUCTION_PATH_VERIFICATION.md` sharpens the artifact-set axis: when the
+  runtime *selects* among variants — build profiles, device manifests, locale bundles — each variant
+  is a delivery axis needing its own production-side probe. A device-split SPA built only the desktop
+  profile and verified only the desktop manifest, so mobile had never booted across five deployments;
+  the phone code was fully tested, the phone artifact never existed. The planning tell: a config
+  listing several builds or targets whose deploy and verify steps name only one of them.
+
+- `skills/extjs-frontend/references/MODERN_COMPONENT_FOOTGUNS.md` gains §17 — `ui:` names are
+  unchecked strings, so an invented one renders a component with no styling at all. Grep the SCSS for
+  the name before using it, copy the exact pair a sibling component uses, and put new-chrome
+  visibility in the pilot smoke: no automated gate sees contrast.
+
+### Fixed
+
+- `tools/find_copilot_comments.sh` — copilot clean detection had gone **blind**, and the fallback
+  it fell through to was reporting false CLEANs. Copilot's review body moved to an emoji-bucket
+  header (`🟢 Approval recommended` / `🟡 Changes recommended` / `🔵 Needs a closer look`) with the
+  count buried in a collapsed block as `Comments generated: 0 new`. Neither phrase the matcher
+  looked for appears in any of them, so body-level detection stopped matching anything — and
+  nothing complained, because the check-run synthesis quietly took over and kept answering. That
+  fallback then papered a green check-run over a review carrying **two real findings**, because
+  suppressed findings post no inline comment and the inline pre-check could not see them. Three
+  fixes: the matcher carries all three phrasings; a body listing suppressed comments is never
+  clean whatever its header says; and the check-run synthesis is gated on there being no review
+  body at all — if a body exists it *is* the verdict. Found by reading review bodies by hand while
+  running the loop on this PR. The file's own header had predicted it: "if Copilot becomes a
+  different bot login or the API field names change, all THREE blocks need updating."
+- `skills/review-loop/references/engine-claude.md` + `tests/test_reference_anchors.sh` — every
+  line-number citation in the review-loop references is gone, replaced by a **greppable named
+  anchor**: a phrase that is a literal substring of exactly one heading. The economics are what
+  decide it — a grep costs CPU, a wrong line number costs a read of the wrong content plus the
+  hunt after it, and the citation keeps *looking* correct either way. Each of the fifteen was
+  resolved against the file as it stood in the commit that introduced it (`git log -S`, then read
+  that revision) rather than guessed. Two findings from doing that: `§131 + §140` was already
+  wrong in the commit that wrote it (the blocks it named were at 139 and 148), and
+  `§Net-capability` had never matched anything — the file only ever said "Net engine capability".
+  A new `test-anchors` target fails on any reintroduced `§NNN`, on a named anchor that stops
+  matching its heading, and on a prose anchor whose definition site disappears.
+- `tools/find_copilot_comments.sh` + `tests/test_copilot_clean_detection.sh` — the adapter gains a
+  `COPILOT_FIXTURE_DIR` test seam mirroring the claude adapter's, and the clean/false-CLEAN paths
+  gain coverage: emoji-bucket clean, suppressed-findings-are-never-clean, and legacy-phrasing
+  back-compat. Both fixtures were checked against the pre-fix adapter first and **fail** there —
+  the suppressed case emits `COPILOT_CLEAN_SIGNAL=checkrun-*`, which is the bug. The drift shipped
+  silently because nothing exercised this path; now a format change fails a test instead of
+  changing which code path answers. `make test` covers it via a new `test-copilot` target.
+  The seam's offline promise is **enforced, not asserted**: one case runs the adapter against a
+  `gh` that always fails. That was not idle — the seam left `gh repo view` unconditional, so the
+  adapter died resolving the repo name before reaching any fixture, and the suite passed anyway
+  because the machine running it had `gh` installed and authed. Repo identity is now resolved
+  locally under the seam, mirroring the claude adapter.
+- `skills/review-loop/references/engine-copilot.md` — records the template drift and the synthesis
+  gate, and **partly reverses** its own § Suppressed comments claim. That section said suppressed
+  comments were absent from every API surface the adapter reads and that the adapter therefore
+  could not be extended to fetch them; the new template renders them inside the review body, and
+  the adapter now reads them. Corrected in place with the half that is still true kept — presence
+  is detected, completeness is not certified, so the human-glance caveat stands. A worked instance
+  of the reversal sweep added to `RULE_self-sweep-before-push` in this same release.
+
+## v5.7.3 — the claude skip-no-op is install-stable, and a US-English pass
+
+Four consecutive PRs on mind-vault's own install produced the same result: every push after a PR's
+first review completed its check green having posted no verdict at all. That is not per-push
+nondeterminism — it is a stable property of an install, which makes it something to measure once and
+budget for rather than rediscover each cycle. (2026-08-21, [#239](https://github.com/infohata/mind-vault/pull/239))
+
+### Changed
+
+- `skills/review-loop/references/engine-claude.md` gains the install-stability calibration. The prior
+  section established that the skip is install-dependent and left *why* unresolved, which leaves an
+  orchestrator treating each push as a coin flip; within one install it does not vary. Carries the
+  cheap probe for classifying your own install (push a trivial commit after the first review, read
+  `CLAUDE_HEAD_VERDICTS`), when to re-probe, and the operational consequence: on a skip-install the
+  explicit retrigger is a routine per-cycle cost, not an exception path. Also records that the
+  `CLAUDE_VERDICT_SET_PROVEN=false` fail-closed gate fired on six of six cycles — on this class of
+  install it is the only thing between a green check and a false CLEAN, so weakening it to reduce
+  noise removes the sole working mechanism.
+- `rules/RULE_git-safety.md` gains a merge-strategy lean, placed above the stacked-PR hazard it
+  shares mechanics with. **Explicitly a preference and never a blocker** — squash-merge stays
+  acceptable and no merge is held over it. The lean toward merge commits is costed concretely:
+  `git branch --merged main` cannot see a squash-merged branch (the tip is never an ancestor), so
+  post-merge cleanup becomes a content-equivalence investigation — and a misleading one once `main`
+  moves ahead, because the diff then reports older revisions of lines `main` has since improved.
+  Ancestry checks false-alarm on every healthy squash-merged branch, and tooling accumulates
+  workarounds. States what squash genuinely buys (a linear `main`, worth most where branches carry
+  noisy WIP) and why that weighs less in a docs repo with no code to bisect and per-PR commits that
+  already read well. Closes with the part that holds either way: confirm content landed before
+  deleting a local branch.
+- `skills/skill-writer/references/LANGUAGE_CONVENTIONS.md` (new) — the house register is now
+  written down rather than inferred: **US-English spelling, metric/SI units, Celsius**. The two
+  axes are independent and the pairing is deliberate — American spelling is the register technical
+  writing is read in, metric is the system the work is done in. The spelling half is justified by
+  the identifiers themselves (`serialize`, `initialize`, `color`, `behavior` are API names in every
+  stack these skills cover, so UK prose puts two spellings of one word on a page). Carries the
+  scope limits that matter more than the rule: never impose it on a consuming project's codebase,
+  never rewrite released CHANGELOG sections or archived docs, and treat the repo's remaining
+  pre-existing drift as a deliberate standalone sweep rather than a tail-end addition. Plus the
+  `analysis`/`analyses` false positive, the check-for-code-identifiers caveat, the rule that a term
+  quoted from an untouched file moves with that file rather than with the pointer that echoes it
+  (with the grep-the-target step that keeps that exception from widening into a blanket one),
+  and the ISO-date / 24-hour conventions already in force. Wired at both write-sites: the `skill-writer` References
+  list, and `RULE_self-sweep-before-push`'s doc-consistency sweep as item (7).
+- **US-English spelling pass across nine skill files** — `behaviour`→`behavior`,
+  `serialise`→`serialize`, `organised`→`organized`, `honour`→`honor`, `favour`→`favor`,
+  `flavour`→`flavor`, `normalise`→`normalize` in `deployment`, `extjs-frontend`, `laravel`, `plan`,
+  `work` and `review-loop` (bodies and references) — the first application of the convention above. Prose only; no code identifiers touched, and historical
+  CHANGELOG sections left as written. The repo still mixes US/UK elsewhere — this is the convention
+  going forward, not a completed sweep.
+
+## v5.7.2 — money-split session harvest: per-row preconditions, live-console ops, one-PR discipline
+
+One day of billing-correctness work on a consuming project, harvested to two destinations. A
+review refused a plan resting on a container-level flag where the enforcing server branched on a
+per-row field — the premise was true of every row then present and still wrong, and shipping it
+would have rebuilt the money bug it was written to fix. Beside it, the console-ops discipline
+learned the hard way when an operator's pasted cleanup loop tripped an edge ban.
+(2026-08-21, [#238](https://github.com/infohata/mind-vault/pull/238))
+
+### Changed
+
+- `agents/AGENT_architect.md` PASS 5 gains the per-row-predicate bullet: phrase a
+  precondition at the level of the mechanism that enforces it — a container-level flag can
+  be TRUE for every row while the server branches on a per-row field, so mixed states
+  silently take the other branch; and when later field evidence contradicts a pessimistic
+  static-read claim, write the dated correction back. From a review that refuted a billing
+  plan's "all rows virtual" premise before it shipped a wrong-money path.
+- `rules/RULE_git-safety.md` gains the fold-into-one-PR default, placed directly above the
+  existing stacked-PR hazard it prevents: if a PR for the work is open and unmerged, push the
+  follow-up commit onto its branch instead of opening a second one, and never branch a new PR
+  off an open PR's branch. Binds hardest on doc finalization, CHANGELOG/version fixes,
+  review-driven fixes and sweeps — the work most likely to get its own PR by reflex. The cost
+  is not merge count but conflicts on append-at-top shared files (`CHANGELOG.md`, the ideas
+  index, the monthly devlog), which two open branches hit by construction and re-hit after
+  every rebase. Carries the cases where a separate PR *is* right.
+- `skills/extjs-frontend/references/MODERN_COMPONENT_FOOTGUNS.md` gains §16: console ops
+  against a live app — `ComponentQuery [0]` is the first instance, not the active view
+  (enumerate with `isVisible(true)`, derive ids from the picked view's own proxy state);
+  destructive calls list-first and one at a time, never a pasted loop (the 13-request 4xx
+  burst → edge fail2ban ban precedent).
+
+## v5.7.1 — cross-box agent handoff via repo issues + a night's incident harvest
+
+One evening on a consuming project produced one new pattern and four hard-won extensions — a
+duplicate-record UX incident, a legacy-row validation wall, and a fail2ban ban of the operator's
+own IP that took a whole e2e suite down with it (2026-08-20, [#237](https://github.com/infohata/mind-vault/pull/237)).
+
+### Added
+
+- `skills/work/references/CROSS_BOX_ISSUE_HANDOFF.md` — when work surfaces a task for an agent
+  on another machine, the target repo's GitHub issues are the channel: issue body = brief with
+  asks, comments = append-only evidence chain, corrections posted rather than edited; the
+  human's relay burden drops to one line. Pointer added to the work skill's References.
+
+### Changed
+
+- `skills/plan/references/DEFERRAL_EXPIRY_TRIGGERS.md` — new section: staged gates rot. A
+  "backend-gated" phase was un-gated the same evening by reading the dependency's source (a
+  pre-existing endpoint family served everything); re-probe gates from source before honoring
+  them, and write gates as the missing *capability*, not the endpoint that lacks it.
+- `skills/extjs-frontend/references/MODERN_COMPONENT_FOOTGUNS.md` — footgun #15: stay-open
+  create dialogs must disarm Save (re-entry guard + mask + state-bound button + `saved` event);
+  an unguarded dialog produced twelve duplicate records from repeated clicks.
+- `skills/extjs-frontend/references/PLAYWRIGHT_COMPONENTQUERY_E2E.md` — §9: mock mode still
+  fetches real external hosts (you are load on someone's box; a dead host fails suites that
+  never mention it), and the known-green-commit re-run that splits code-vs-environment in one
+  run.
+- `skills/laravel/references/FORM_REQUESTS_RESOURCES.md` — update must not re-run the create
+  gauntlet: validating `$model->toArray()` against create rules makes legacy rows unupdatable
+  (even a state flip bounces); validate the request's fields, give state transitions their own
+  rules.
+- `skills/deployment/references/HARDENING.md` — fail2ban behind proxies: never act on
+  forwarded-IP log lines (bans the end user while the proxy path stays open), never count
+  application-level 4xx toward floods, audit ban lists for CDN/private-relay egress, monitor
+  from an outside vantage.
+- **References one-liners refreshed for all five extended/added references** —
+  `deployment`, `laravel`, `plan`, and `extjs-frontend` (×2). The one-liner is the
+  load-decision surface: a reference can gain a whole section and stay invisible to an agent
+  scanning References, so extending a body means updating the line that advertises it.
+- **CHANGELOG provenance markers backfilled** — v5.4.7, v5.4.8, v5.4.9 and v5.5.0 carried no
+  PR link, and two of them still held the literal placeholder `([PR link in commit trail])`.
+  All four now carry `(date, [#N](url))` per the preamble's convention.
+- **`.claude-plugin/plugin.json`** — 5.7.0 → 5.7.1, the mirror the version bump left behind.
+
+## v5.7.0 — third frontend stack: `skills/extjs-frontend` (Sencha ExtJS 7 Modern)
+
+A season of review and pilot-smoke findings on a consuming Sencha ExtJS 7.7 Modern SPA came down
+to one theme: the Modern widgets do less than their names imply — an unchecked `checkbox`
+serialises `null`, `formpanel` lets Enter reload the SPA, seeded models carry phantom ids, the
+store `load` event delivers an Array. Around that sit a service layer that is a *precondition*
+for any error UX, Jest and Playwright harnesses built for a framework that resists both, and a
+toolchain whose production compile only the image build proves. All of it lifts into a stack
+skill filling the four frontend contract headings — no persona edits, same as the Laravel proof.
+(2026-08-18, [#236](https://github.com/infohata/mind-vault/pull/236))
+
+### Added
+
+- **`skills/extjs-frontend/`** — `SKILL.md` (frontmatter trigger, stack resolution + fail-open,
+  the four verbatim contract headings, a 14-row ✅/❌ matrix) + `VERSION` `7.7` (framework
+  version, per the `django`/`laravel` convention) + seven
+  load-on-demand references: `MODERN_COMPONENT_FOOTGUNS`, `SERVICE_LAYER`,
+  `JEST_EXT_STUB_HARNESS`, `PLAYWRIGHT_COMPONENTQUERY_E2E`, `SENCHA_TOOLCHAIN_AND_BUILD`,
+  `I18N_KEY_SWEEP`, `REFACTOR_CONTRACT_PINNING`. Body ≤ 250 lines; everything project-specific
+  generalised (`App.*`, `<prefix>_*`, wrapper-field family, "entity dialog"). The frontmatter
+  `description` and the `When to use` precondition both state the load gate positively **and**
+  negatively — a Sencha marker must be present, and a plain Jest/Playwright/webpack toolchain is
+  explicitly not one — so the skill stays dark in every repo that is not an ExtJS repo.
+
+### Changed
+
+- **`skills/work/references/persona-dispatch.md` — the `extjs` auto-detect row + precedence rule
+  A3.** Frontend signal: `app.json` `"framework": "ext"` / `@sencha/ext*` / `Ext.define(` under
+  `app/**`. Without A3 the skill would have been unreachable in practice: every ExtJS repo ships
+  a `package.json`, which the `node` row already claimed as the frontend signal, so detection
+  resolved `node` and never `extjs`. A3 makes a **named framework marker outrank the generic
+  `package.json`**, which is now explicitly the fallback. **A3 is general, not an ExtJS
+  carve-out** — it governs every repo carrying a named frontend marker *and* a
+  `package.json` (a Laravel app with Vite/Tailwind, a Django app with a webpack build).
+  A2 had only separated backend from frontend detection; two competing *frontend* signals
+  had no rule at all until now. `extjs` is also the first
+  **frontend-only** stack — it leaves `backend:` unresolved by design, and the pin convention
+  gains the one-key form (`frontend: extjs-frontend`).
+- **`skills/work/references/SKILL_CONTRACT.md` — the floor is per-side, and absence is a valid
+  answer.** "MUST expose every required heading" read as all 10 for any stack skill; a
+  frontend-only skill owes only the 4. Stated explicitly, along with the clause the SPA case
+  forced: a heading may be filled with a **documented absence** — `extjs-frontend`'s
+  *Partial/fragment response* records that an SPA returns JSON envelopes, never HTML fragments,
+  and specifies the envelope contract in place of one. That is a filled heading; a placeholder
+  is not. Stale "future laravel*" tiering diagram refreshed.
+- **`README.md`** — skills table gains the `extjs-frontend` row; the slash-invocable list names it.
+- **`.claude-plugin/plugin.json`** — `extjs` keyword.
+
+## v5.6.2 — plans must verify the production path, not just the dev-mode gate
+
+A consuming SPA project's first real deployment surfaced six defect classes its always-green `unit + e2e` gate could not see — a production compile broken for weeks, a minifier-mangled property key at boot, a crippled fresh install the build plugin swallowed, raw translation keys the mocked API hid. One meta-cause: every axis on which the shipped artefact differs from what the gate exercises stayed unverified until the image was built and booted. (2026-08-17, [#235](https://github.com/infohata/mind-vault/pull/235))
+
+### Added
+
+- **`skills/plan/references/PRODUCTION_PATH_VERIFICATION.md`** — the rule for plan authors: enumerate the axes on which production differs from the local gate (compiler/minifier mode, install, artefact set, configuration, data, delivery) and name a production-side check per axis. Where CI cannot run the production path, the manual gate becomes a named Verification step, not a nice-to-have.
+
+### Changed
+
+- **`agents/AGENT_architect.md` PASS 4** — new probe: which of the plan's Verification commands run against the artefact that will actually be deployed? Dev-mode-only gates on a project with a distinct production build/deploy path are a finding, with the missing check named per axis.
+- **`skills/plan/SKILL.md`** — step 4's Verification bullet points at the new reference; References list gains the one-liner.
+
+## v5.6.1 — copilot CLEAN covers only the comments the API shows
+
+On the v5.6.0 PR the review loop converged clean over four cycles — copilot's final verdict said "generated no new comments" — while a suppressed copilot comment held a valid finding the whole time (a charset contradiction between the token prose and the wired regex). Suppressed comments exist only in the PR web UI; they appear on none of the API surfaces the adapter reads, and no API is known to expose them. The maintainer found it by expanding the suppressed set by hand. (2026-08-14, [#234](https://github.com/infohata/mind-vault/pull/234))
+
+### Added
+
+- **`skills/review-loop/references/engine-copilot.md` § Suppressed comments** — the incident, the mechanism (confidence-filter suppression, invisible to `/pulls/N/reviews` and `/pulls/N/comments`), and the mitigations: a standing hand-back caveat telling the human to expand suppressed comments in the UI before merging, user-relayed suppressed findings entering the fix batch as first-class input (verified against the tree first — suppression correlates with lower confidence), and an explicit instruction not to weaken the structural CLEAN verdict over a blind spot the adapter cannot close. Plus a row in the § Failure modes table.
+
+### Changed
+
+- **`skills/review-loop/SKILL.md`** — the final hand-back now carries the suppressed-comments caveat whenever copilot is in the engine set; the References one-liner surfaces the new section.
+
+## v5.6.0 — cross-project idea namespacing: bare numbers are local, foreign refs carry the repo's name
+
+Every project numbers its own `IDEA-NNN` stream, so bare numbers collide the moment two projects appear in one conversation or doc — a live session citing another repo's ideas from inside mind-vault made the repo context genuinely ambiguous (both repos have an unrelated IDEA-016/017). This release ships the attribution convention that ends it. Minor bump rather than the per-PR patch default: maintainer-selected per the adopter-magnitude rule — the convention changes how every consuming project writes cross-repo references. (2026-08-14, IDEA-023, [#233](https://github.com/infohata/mind-vault/pull/233))
+
+### Added
+
+- **`skills/idea/references/CROSS_PROJECT_IDEA_REFS.md`** — the grammar: bare `IDEA-NNN` always means the repo the text lives in (or the session's working repo in prose); a foreign ref is written `IDEA-NNN:project`, where the token is the repo's own name, never an alias (`IDEA-NNN:mind-vault`, not `IDEA-NNN:mv`). Branch names are excluded — `:` is illegal in git refnames, and branches stay defended by the § 4 scan-from-disk rule. Frontmatter relationship lists stay same-project bare ids.
+- **Scrub-gate synergy** — inside mind-vault, any namespaced ref whose suffix is not a placeholder is a violation by construction, so the whole class is now catchable with one grep (full pattern `IDEA-[0-9]{3,}:[a-z0-9._-]+` with a `:project-` placeholder carve-out; the truncated pattern is banned — it matched 362 ordinary idea-title colons when dry-run).
+
+### Changed
+
+- **Wired one-liners** at the write-sites that produce cross-project refs, with a `Wired:` list in the reference: `skills/idea/SKILL.md` § 4 (citing is the mirror problem of numbering), `skills/compound/SKILL.md` (foreign-class illustrations, drop-the-tag policy bullet — "qualified" now defined, optional grep aid, § 5 Cross-link, auto-memory write-up), `skills/wrap/SKILL.md` Step 4 (devlog Related-section refs), `rules/RULE_cross-idea-amendments.md` (Amends-trailers are same-repo by construction).
+
+## v5.5.2 — the two-readers rule now reaches every place that writes for the human gate
+
+v5.5.1 created the rule but wired it into only one write-site (the compound skill's destination step). Every other surface that authors CHANGELOG sections, PR bodies, or reference prose never saw it — so the next `/wrap` or `/create-pr` would have reproduced the same dense register the rule exists to prevent. This release is the catchment sweep: a one-line pointer at each remaining write-site, and a `Wired:` list in the reference so the coverage is checkable. (2026-08-13, [#232](https://github.com/infohata/mind-vault/pull/232))
+
+### Changed
+
+- **`skills/compound/references/mind-vault-promotion.md`** — the three sections in the same file that author human-read text (§ Self-mode CHANGELOG bump, § Commit format, § PR body skeleton) now each point at § Write for the two readers. The CHANGELOG section-shape bullet no longer says "match existing entries' prose density" — matching the old entries is exactly how the dense register would have survived. A `Wired:` list at the end of the section names every write-site carrying a pointer.
+- **`skills/wrap/SKILL.md`** — the three places wrap writes human-read log text (self-mode Step 4's CHANGELOG bullets, docs-mode Step 4's devlog entries, Step 4b's headline paragraph) now say: plain register, and don't anchor on older entries. Step 4 carried the match-the-old-density trap twice — "see existing entries for prose-density anchors" (CHANGELOG) and "match prose density" (devlog) — both now removed. The devlog instance was caught by the claude review engine on this PR's first cycle, after the authoring sweep missed it.
+- **`commands/create-pr.md`** — the PR-description step now instructs the plain register: the body is for a human reviewer, reading-speed sentences, never a compressed restatement of the diff.
+- **`skills/skill-writer/SKILL.md`** — § Prose density gains the counterweight the tighten-pass was missing: density has a floor, and it is the concrete incident. A tighten-pass that cuts the worked example anchoring a pattern produces the unverifiable abstraction the v5.5.0 harvest shipped.
+- **`skills/compound/SKILL.md`** — the References one-liner for `mind-vault-promotion.md` now surfaces the two-readers section, so load-on-demand discovery finds it.
+
+## v5.5.1 — compound writes for two readers: plain for the human gate, dense-but-concrete-first for the agent
+
+The v5.5.0 harvest was correct but exhausting to review — the maintainer's merge verdict was "this was a hard read". Root cause: every surface of the PR was written at the same maximum compression, including the surfaces only a human ever reads. (2026-08-13, [#231](https://github.com/infohata/mind-vault/pull/231))
+
+### Added
+
+- **`skills/compound/references/mind-vault-promotion.md` § Write for the two readers** — CHANGELOG sections, PR bodies and commit messages are for the human reviewer: plain sentences, what changed and what it prevents, never a compressed restatement of the reference text. Reference and skill bodies stay token-dense for agent loading, but each pattern opens with the concrete incident or example before the general claim, one claim per sentence. Two-line stub with pointer added to the compound SKILL.md body.
+
+## v5.5.0 — nine root patterns from one deferred harvest: assertions that never ran, runs that never reached, premises nobody falsified
+
+From a batch harvest of a month's un-compounded engineering work across four repositories of one estate — every lesson counted for independent recurrence, checked against prior art, then attacked by two adversarial reviewers reading primary sources. 553 candidates reduced to 112, of which 23 survived review; those 23 turned out to instantiate **eight** root patterns, all written in this release. Patterns identified across the wider set but whose members did not survive review are deliberately **not** written — including the ninth, attested by 15 members and cleared by none. (2026-08-13, [#230](https://github.com/infohata/mind-vault/pull/230))
+
+### Changed
+
+- **`skills/shell/references/EVIDENCE_SCRIPTS_AND_FALSE_CLEANS.md`** — the file's spine restated: **passing is the DEFAULT state of a broken check**, since no aggregate verdict distinguishes *asserted-and-true* from *never asserted*. Adds the assertion that **could not run** — a three-state `ASSERTED / COULD-NOT-RUN / FAILED` where could-not-run must be treated as failed, and the `<step> --apply && <step> --verify` anti-pattern, whose verify is skipped **exactly when the apply failed** while the same operator prevents errexit from stopping the run; the discrimination matters, since `--apply --verify` as one invocation is safe — the hazard is `&&`-list position, not the pairing. Plus the **fail-open branch that names an external cause**, converting a permanent defect into a plausible transient (audit whether its success value has ever once been recorded); the **unknown value needing its own refusing branch**, at both the comparing and the filling layer, because an unrepresented state lands on the benign side; and **a green run certifies only the state space it visited** — every substitute for reality is more forgiving than reality, with execution-context divergence (PATH, `profile.d`, stdin, tty, login shell) as one axis rather than a separate subject.
+- **`skills/shell/references/SAFE_CONFIG_EDITS.md`** — the deciding property usually sits **outside the line you wrote**. Three shapes: **the consumer's grammar decides what your line means** — an ignore-file has no trailing-comment syntax, and a backup written beside a config file *is* a config file to any reader globbing the directory; **assert the SPAN you consumed, not the count** — an operation bounded by an endpoint someone else chose (a range whose end delimiter sits at a coarser level than its start; a deploy shipping the deployed ref's range rather than the PR diff), identical arithmetic at two scales; and **a missing bind-mount source becomes a root-owned directory**, visible only on a fresh clone, where `&&` swallows the status that would have told you.
+- **`skills/shell/references/MAINTENANCE_SCRIPT_CONTRACT.md`** — a precondition that forbids a **name** encodes the author's model of the deployment rather than the property that decides correctness, so it over-refuses loudly while under-covering silently. Reconciles precondition-vs-verify against the existing fail-closed `--verify` rule instead of competing with it.
+- **`skills/plan/references/DEFERRAL_EXPIRY_TRIGGERS.md`** — **a record is not a mechanism**, in two halves: *not refreshed* (what the file already covered, now named as one half) and *not enforced* — a statement true when written that no code path evaluates at the moment of action. Printed guidance and ignore-rules are the two instance families.
+- **`skills/deployment/SKILL.md`** — **the defect is only visible from a side nobody stands on**: a probe that never leaves the box it tests can only prove the port is published; health checks watch the tier that was updated, not the background tier that also runs the code; one tree serves several runtimes. Reproduce from the affected party's position, or downgrade the claim to evidence about the producer.
+- **`agents/AGENT_architect.md`** — a new pass for **the plausible account nobody made the system refute**: name the discriminating observation before concluding; a sample that cannot exhibit the failure proves consistency, not exclusivity; re-establish inherited claims, since true-when-measured is falsified by a later migration; removing a control needs hazard evidence, not an "already inert" sweep; and repeated verdicts from one engine are not independent samples. The pass now requires a premise ledger marking which sentences were **measured** versus **inferred**.
+- **Consumer-pointer sync (post-write sweep)** — `skills/plan/SKILL.md` and `skills/plan/references/architect-handoff.md` now describe the architect as 5-pass; the reference-list one-liners in `skills/shell/SKILL.md` and `skills/plan/SKILL.md` surface the new sections so load-on-demand discovery finds them; a pointer to a never-written reference file in `EVIDENCE_SCRIPTS_AND_FALSE_CLEANS.md` replaced with the prose it stood for.
+- **`docs/plans/2026-04-19-sprint-workflow.md` → `docs/archive/2026-04-sprint-workflow/`** — the founding sprint-workflow plan was the last live doc still describing a 4-pass architect (and retired bugbot personas); archived frozen with its historical wording restored and an archive banner pointing at `docs/guides/SPRINT_WORKFLOW.md`. `docs/plans/` remains the documented fallback location for future orphan plans.
+
 ## v5.4.9 — shadow observes but does not protect; sweep the false-clean CLASS, not the instance
 
-From the live rung of the same staged rollout that produced v5.4.8, plus the review cycle over its evidence tooling ([PR link in commit trail]).
+From the live rung of the same staged rollout that produced v5.4.8, plus the review cycle over its evidence tooling. (2026-08-10, [#229](https://github.com/infohata/mind-vault/pull/229))
 
 ### Added
 
@@ -26,7 +579,7 @@ From the live rung of the same staged rollout that produced v5.4.8, plus the rev
 
 ## v5.4.8 — the OFF position of a kill switch must be faithful per call site; a zero needs a positive control
 
-From a staged rollout of a matching-rule change against a third-party datastore ([PR link in commit trail]).
+From a staged rollout of a matching-rule change against a third-party datastore. (2026-08-02, [#228](https://github.com/infohata/mind-vault/pull/228))
 
 ### Added
 
@@ -48,7 +601,7 @@ A deferral justified by a claim about the *surrounding context* ("acceptable whi
 trusted") can never fire: the successor ticket waits on backlog priority while the condition that made
 the justification true has already lapsed. Observed in the wild — an authorization gap stayed deferred
 straight through the change that made it a real exposure, and surfaced only because a human asked
-whether anything was left.
+whether anything was left. (2026-07-27, [#227](https://github.com/infohata/mind-vault/pull/227))
 
 ### Added
 

@@ -25,7 +25,7 @@ class StorePostRequest extends FormRequest
         ];
     }
 
-    // Optional: normalise BEFORE validation runs.
+    // Optional: normalize BEFORE validation runs.
     protected function prepareForValidation(): void
     {
         $this->merge(['slug' => str()->slug($this->title)]);
@@ -67,7 +67,7 @@ $data = $request->safe()->merge(['user_id' => $request->user()->id]);
 
 ## Output — API Resources, never raw models
 
-Returning an Eloquent model directly serialises **every** attribute (including ones you forgot to `$hidden`) and couples the API to the schema. A `JsonResource` makes the contract explicit.
+Returning an Eloquent model directly serializes **every** attribute (including ones you forgot to `$hidden`) and couples the API to the schema. A `JsonResource` makes the contract explicit.
 
 ```php
 // php artisan make:resource PostResource
@@ -103,6 +103,26 @@ A failed Form Request auto-returns HTTP **422** with a JSON body when the reques
 ```
 
 No try/catch needed — the framework throws `ValidationException` and the handler renders it. For web (non-JSON) requests the user is redirected back with errors flashed to the session.
+
+## Update must not re-run the create gauntlet
+
+The lazy `update()` shape — `$model->fill($request->input())` then validating
+`$model->toArray()` against the **create** rules — quietly makes every historical row a hostage
+to today's rules. Observed on a legacy table: rows with `NULL` in a now-`required` column, `0`
+stored in a now-`exists`-checked FK, and `0000-00-00 00:00:00` in a now-`date_format` column
+could not even be **deactivated** from the UI — the state flip re-validated fields the request
+never touched, and every PUT bounced 422/400. The client team ended up shipping a sanitizer that
+nulls "information-free" values before echoing the record back — a workaround the API forced.
+
+Rules:
+
+- **Validate the request, not the stored record.** Update rules cover the fields *provided*
+  (`sometimes`, or a dedicated Form Request per verb); a state transition (`active`,
+  `status`) gets its own thin endpoint or a rule set touching only that field.
+- Create-rule tightening (a column becomes `required`, an FK gains `exists`) is a **migration
+  concern for old rows**, not something to enforce retroactively through unrelated updates.
+- Smell in review: `update()` sharing `store()`'s rules verbatim, or any validation call whose
+  input is `$model->toArray()` rather than request data.
 
 ## Reviewer grep
 
